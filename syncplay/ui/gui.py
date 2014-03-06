@@ -212,6 +212,17 @@ class MainWindow(QtGui.QMainWindow):
                 self._syncplayClient.setUserOffset(t)
             else:
                 self.showMessage("Invalid offset value", True)
+                
+    def createControlledRoom(self):
+        self._syncplayClient.createControlledRoom()
+    
+    def identifyAsController(self):
+        controlpassword, ok = QtGui.QInputDialog.getText(self,"Identify as Room Controller",
+                "Enter controller password (see http://syncplay.pl/guide/ for usage instructions):", QtGui.QLineEdit.Normal,
+                "")
+        if ok and controlpassword != '':
+            self._syncplayClient.identifyAsController(controlpassword)
+                
         
     def openUserGuide(self):
         if sys.platform.startswith('linux'):
@@ -346,6 +357,10 @@ class MainWindow(QtGui.QMainWindow):
         window.advancedMenu = QtGui.QMenu("&Advanced", self)
         window.setoffsetAction = window.advancedMenu.addAction(QtGui.QIcon(self.resourcespath + 'timeline_marker.png'),"Set &offset")
         window.setoffsetAction.triggered.connect(self.setOffset)
+        window.createcontrolledroomAction = window.advancedMenu.addAction(QtGui.QIcon(self.resourcespath + 'page_white_key.png'),"&Create controlled room")
+        window.createcontrolledroomAction.triggered.connect(self.createControlledRoom)
+        window.identifyascontroller = window.advancedMenu.addAction(QtGui.QIcon(self.resourcespath + 'key_go.png'),"&Identify as room controller")
+        window.identifyascontroller.triggered.connect(self.identifyAsController)
         window.menuBar.addMenu(window.advancedMenu)
         
         window.helpMenu = QtGui.QMenu("&Help", self)
