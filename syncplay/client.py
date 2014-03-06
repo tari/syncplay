@@ -370,7 +370,13 @@ class SyncplayClient(object):
     def setPaused(self, paused):
         if(self._player and self.userlist.currentUser.file):
             self._player.setPaused(paused)
-    
+            
+    def createControlledRoom(self):
+        self.ui.showMessage("Create controlled room...")
+        
+    def identifyAsController(self, controlPassword):
+        self.ui.showMessage("Identify as room controller with password: {}".format(controlPassword))
+
     def start(self, host, port):
         if self._running:
             return
