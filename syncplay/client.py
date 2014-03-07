@@ -371,8 +371,23 @@ class SyncplayClient(object):
         if(self._player and self.userlist.currentUser.file):
             self._player.setPaused(paused)
             
+    def generateControlPassword(self):
+        import random
+        import string
+        random.seed()
+        
+        def randomletters(quantity):
+            return ''.join(random.choice(string.ascii_uppercase) for _ in xrange(quantity))
+
+        def randomnumbers(quantity):
+            return ''.join(random.choice(string.digits) for _ in xrange(quantity))
+        
+        controlPassword = "{}-{}-{}".format(randomletters(2),randomnumbers(3),randomnumbers(3)) 
+        return controlPassword
+            
     def createControlledRoom(self):
-        self.ui.showMessage("Create controlled room...")
+        controlPassword = self.generateControlPassword()
+        self.ui.showMessage("Create controlled room with password: {}".format(controlPassword))
         
     def identifyAsController(self, controlPassword):
         self.ui.showMessage("Identify as room controller with password: {}".format(controlPassword))
