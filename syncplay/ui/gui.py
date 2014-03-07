@@ -105,6 +105,9 @@ class MainWindow(QtGui.QMainWindow):
         message = message.replace("\n", "<br />")
         message = "<span style=\"color:#FF0000;\">" + message + "</span>"
         self.newMessage(time.strftime(constants.UI_TIME_FORMAT, time.localtime()) + message + "<br />")
+        
+    def updateRoomName(self, room = ""):
+        self.roomInput.setText(room)
 
     def joinRoom(self, room = None):
         if room == None:
