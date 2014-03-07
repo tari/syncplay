@@ -414,6 +414,7 @@ class SyncplayClient(object):
         self.ui.showMessage("Created controlled room '{}' with password '{}'. Please save this information for future reference!".format(roomName, controlPassword))
         self.setRoom(roomName)
         self.sendRoom()
+        self.ui.updateRoomName(roomName)
         
     def controlledRoomCreationError(self, errormsg):
         # NOTE (Client): Triggered by protocol to handle createControlledRoom if controlled rooms are not supported by server or if password is malformed
@@ -730,6 +731,9 @@ class UiManager(object):
 
     def markEndOfUserlist(self):
         self.__ui.markEndOfUserlist()
+        
+    def updateRoomName(self, roomName):
+        self.__ui.updateRoomName(roomName)
     
     def drop(self):
         self.__ui.drop()
