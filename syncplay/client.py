@@ -407,7 +407,7 @@ class SyncplayClient(object):
     def controlPasswordCorrect(self, controlPassword, roomName):
         controlPassword = self.getRoomFromControlPassword(controlPassword)
         roomName = roomName[-12:]
-        return (controlPassword == roomName)  
+        return (controlPassword.upper() == roomName.upper())  
         
     def controlledRoomCreated(self, controlPassword, roomName):
         # NOTE (Client): Triggered by protocol to handle createControlledRoom when room is created
