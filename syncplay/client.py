@@ -389,7 +389,7 @@ class SyncplayClient(object):
         controlPassword = self.generateControlPassword()
         # TODO (Client): Send request to server; handle success and failure
         # TODO (Server): Process request, send response
-        self.ui.showMessage("Attempting to create controlled room with password '{}'...".format(controlPassword))
+        self.ui.showMessage("Attempting to create controlled room suffix with password '{}'...".format(controlPassword))
         
         # Simulation:
         self.controlledRoomCreated(controlPassword, self.getRoomFromControlPassword(controlPassword))
@@ -411,7 +411,7 @@ class SyncplayClient(object):
         
     def controlledRoomCreated(self, controlPassword, roomName):
         # NOTE (Client): Triggered by protocol to handle createControlledRoom when room is created
-        self.ui.showMessage("Created controlled room '{}' with password '{}'. Please save this information for future reference!".format(roomName, controlPassword))
+        self.ui.showMessage("Created controlled room suffix '{}' with password '{}'. Please save this information for future reference!".format(roomName, controlPassword))
         self.setRoom(roomName)
         self.sendRoom()
         self.ui.updateRoomName(roomName)
@@ -419,7 +419,7 @@ class SyncplayClient(object):
     def controlledRoomCreationError(self, errormsg):
         # NOTE (Client): Triggered by protocol to handle createControlledRoom if controlled rooms are not supported by server or if password is malformed
         # NOTE (Server): Triggered by protocol to handle createControlledRoom if password is malformed
-        self.ui.showErrorMessage("Failed to create the controlled room for the following reason: {}.".format(errormsg))
+        self.ui.showErrorMessage("Failed to create the controlled room suffix for the following reason: {}.".format(errormsg))
         
     def identifyAsController(self, controlPassword):
         # TODO (Client): Send identification to server; handle success and failure
