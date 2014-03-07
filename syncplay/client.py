@@ -409,6 +409,11 @@ class SyncplayClient(object):
         # NOTE (Client): Triggered by protocol handling identiedAsController, e.g. on server response or not supported error
         # NOTE (Server): Relevant error given in response to identifyAsController if password is wrong
         self.ui.showErrorMessage("Failed to identify as a room controller for the following reason: {}.".format(errormsg))
+        
+    def notControllerError(self, errormsg):
+        # NOTE (Client): Trigger when client gets a "not controller" error from server (e.g. due to illegal pauses, unpauses and seeks)
+        # NOTE (Server): Give "not controller" error when users try to perform illegal pause, unpause or seek
+        self.ui.showErrorMessage("There are currently people with 'room controller' status in this room. As such, only they can pause, unpause and seek. If you want to perform these actions then you must either identify as a controller or join a different room. See http://syncplay.pl/guide/ for more details.")
 
     def start(self, host, port):
         if self._running:
