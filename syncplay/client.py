@@ -391,9 +391,29 @@ class SyncplayClient(object):
         # TODO (Server): Process request, send response
         self.ui.showMessage("Attempting to create controlled room with password '{}'...".format(controlPassword))
         
+        # Simulation:
+        self.ui.showMessage("Room name = {}".format(self.getRoomFromControlPassword(controlPassword)))
+        self.controlledRoomCreated(controlPassword, self.getRoomFromControlPassword(controlPassword))
+        
+    def getRoomFromControlPassword(self, controlPassword):
+        # TODO: Move to server, use proper salt
+        def stripControlPassword(controlPassword):
+            CONTROLPASS_STRIP_REGEX = u"[-~_\.\[\](): '\"]"
+            return re.sub(CONTROLPASS_STRIP_REGEX,"",controlPassword)
+        salt = "Hammer"
+        controlPassword = salt.join(stripControlPassword(controlPassword[:64].upper()))
+        roomName = hashlib.sha256(controlPassword).hexdigest()[:12]
+        return roomName
+    
+    def controlPasswordCorrect(self, controlPassword, roomName):
+        controlPassword = self.getRoomFromControlPassword(controlPassword)
+        return (controlPassword == roomName)  
+        
     def controlledRoomCreated(self, controlPassword, roomName):
         # NOTE (Client): Triggered by protocol to handle createControlledRoom when room is created
         self.ui.showMessage("Created controlled room '{}' with password '{}'. Please save this information for future reference!".format(roomName, controlPassword))
+        self.setRoom(roomName)
+        self.sendRoom()
         
     def controlledRoomCreationError(self, errormsg):
         # NOTE (Client): Triggered by protocol to handle createControlledRoom if controlled rooms are not supported by server or if password is malformed
@@ -404,6 +424,10 @@ class SyncplayClient(object):
         # TODO (Client): Send identification to server; handle success and failure
         # TODO (Server): Process request, send response 
         self.ui.showMessage("Identifying as room controller with password '{}'...".format(controlPassword))
+        if self.controlPasswordCorrect(controlPassword, self.userlist.currentUser.room) == True:
+            self.ui.showMessage("Control password correct ^_^")
+        else:
+            self.ui.showErrorMessage("Control password incorrect >_<")
         
     def controllerIdentificationError(self, errormsg):
         # NOTE (Client): Triggered by protocol handling identiedAsController, e.g. on server response or not supported error
