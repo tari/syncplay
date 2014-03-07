@@ -362,7 +362,7 @@ class MainWindow(QtGui.QMainWindow):
         window.advancedMenu = QtGui.QMenu("&Advanced", self)
         window.setoffsetAction = window.advancedMenu.addAction(QtGui.QIcon(self.resourcespath + 'timeline_marker.png'),"Set &offset")
         window.setoffsetAction.triggered.connect(self.setOffset)
-        window.createcontrolledroomAction = window.advancedMenu.addAction(QtGui.QIcon(self.resourcespath + 'page_white_key.png'),"&Create controlled room")
+        window.createcontrolledroomAction = window.advancedMenu.addAction(QtGui.QIcon(self.resourcespath + 'page_white_key.png'),"&Create controlled room suffix")
         window.createcontrolledroomAction.triggered.connect(self.createControlledRoom)
         window.identifyascontroller = window.advancedMenu.addAction(QtGui.QIcon(self.resourcespath + 'key_go.png'),"&Identify as room controller")
         window.identifyascontroller.triggered.connect(self.identifyAsController)
