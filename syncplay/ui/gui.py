@@ -45,6 +45,8 @@ class MainWindow(QtGui.QMainWindow):
             usertreeRoot.appendRow((roomitem, blankitem))
             for user in rooms[room]:
                 useritem = QtGui.QStandardItem(user.username)
+                if user.username[:3] == "(C)":
+                    useritem.setIcon(QtGui.QIcon(self.resourcespath + "controller.png"))
                 fileitem = QtGui.QStandardItem("")
                 if (user.file):
                     fileitem = QtGui.QStandardItem(user.file['name'] + " ("+formatTime(user.file['duration'])+")")
