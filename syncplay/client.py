@@ -405,10 +405,6 @@ class SyncplayClient(object):
         # TODO (Server): Process request, send response 
         self.ui.showMessage("Identifying as room controller with password '{}'...".format(controlPassword))
         
-    def identiedAsController(self):
-        # NOTE (Client): Triggered by protocol to handle identifyAsController when user is identified
-        self.ui.showMessage("Identified as a room controller. When there are controllers in a room only they can pause, unpause and seek.")
-        
     def controllerIdentificationError(self, errormsg):
         # NOTE (Client): Triggered by protocol handling identiedAsController, e.g. on server response or not supported error
         # NOTE (Server): Relevant error given in response to identifyAsController if password is wrong
@@ -568,6 +564,12 @@ class SyncplayUserlist(object):
         self._roomUsersChanged = True
 
     def __showUserChangeMessage(self, username, room, file_):
+        controlStatus = None
+        #TODO: Add controller identification notification trigger code
+        if(controlStatus):
+            if (controlStatus == "Controller" and room and self.currentUser.room == room): 
+                self.ui.showMessage("{} has identified as a room controller. If there are controllers in a room then only they can pause, unpause and seek.".format(username))
+            return
         if(room and not file_):
             message = getMessage("en", "room-join-notification").format(username, room)
             self.ui.showMessage(message)
