@@ -392,7 +392,6 @@ class SyncplayClient(object):
         self.ui.showMessage("Attempting to create controlled room with password '{}'...".format(controlPassword))
         
         # Simulation:
-        self.ui.showMessage("Room name = {}".format(self.getRoomFromControlPassword(controlPassword)))
         self.controlledRoomCreated(controlPassword, self.getRoomFromControlPassword(controlPassword))
         
     def getRoomFromControlPassword(self, controlPassword):
