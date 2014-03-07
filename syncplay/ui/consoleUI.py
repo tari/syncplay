@@ -23,6 +23,9 @@ class ConsoleUI(threading.Thread):
     def drop(self):
         pass
     
+    def updateRoomName(self, room):
+        pass
+    
     def run(self):
         try:
             while True:
