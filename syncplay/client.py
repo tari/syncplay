@@ -406,6 +406,7 @@ class SyncplayClient(object):
     
     def controlPasswordCorrect(self, controlPassword, roomName):
         controlPassword = self.getRoomFromControlPassword(controlPassword)
+        roomName = roomName[-12:]
         return (controlPassword == roomName)  
         
     def controlledRoomCreated(self, controlPassword, roomName):
