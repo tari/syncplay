@@ -223,7 +223,7 @@ class MainWindow(QtGui.QMainWindow):
     
     def identifyAsController(self):
         controlpassword, ok = QtGui.QInputDialog.getText(self,"Identify as Room Controller",
-                "Enter controller password (see http://syncplay.pl/guide/ for usage instructions):", QtGui.QLineEdit.Normal,
+                "Enter controller password for this room (see http://syncplay.pl/guide/ for usage instructions):", QtGui.QLineEdit.Normal,
                 "")
         if ok and controlpassword != '':
             self._syncplayClient.identifyAsController(controlpassword)
