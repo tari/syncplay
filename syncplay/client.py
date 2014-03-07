@@ -387,10 +387,32 @@ class SyncplayClient(object):
             
     def createControlledRoom(self):
         controlPassword = self.generateControlPassword()
-        self.ui.showMessage("Create controlled room with password: {}".format(controlPassword))
+        # TODO (Client): Send request to server; handle success and failure
+        # TODO (Server): Process request, send response
+        self.ui.showMessage("Attempting to create controlled room with password '{}'...".format(controlPassword))
+        
+    def controlledRoomCreated(self, controlPassword, roomName):
+        # NOTE (Client): Triggered by protocol to handle createControlledRoom when room is created
+        self.ui.showMessage("Created controlled room '{}' with password '{}'. Please save this information for future reference!".format(roomName, controlPassword))
+        
+    def controlledRoomCreationError(self, errormsg):
+        # NOTE (Client): Triggered by protocol to handle createControlledRoom if controlled rooms are not supported by server or if password is malformed
+        # NOTE (Server): Triggered by protocol to handle createControlledRoom if password is malformed
+        self.ui.showErrorMessage("Failed to create the controlled room for the following reason: {}.".format(errormsg))
         
     def identifyAsController(self, controlPassword):
-        self.ui.showMessage("Identify as room controller with password: {}".format(controlPassword))
+        # TODO (Client): Send identification to server; handle success and failure
+        # TODO (Server): Process request, send response 
+        self.ui.showMessage("Identifying as room controller with password '{}'...".format(controlPassword))
+        
+    def identiedAsController(self):
+        # NOTE (Client): Triggered by protocol to handle identifyAsController when user is identified
+        self.ui.showMessage("Identified as a room controller. When there are controllers in a room only they can pause, unpause and seek.")
+        
+    def controllerIdentificationError(self, errormsg):
+        # NOTE (Client): Triggered by protocol handling identiedAsController, e.g. on server response or not supported error
+        # NOTE (Server): Relevant error given in response to identifyAsController if password is wrong
+        self.ui.showErrorMessage("Failed to identify as a room controller for the following reason: {}.".format(errormsg))
 
     def start(self, host, port):
         if self._running:
