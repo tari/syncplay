@@ -30,6 +30,8 @@ class JSONCommandProtocol(LineReceiver):
         if not line:
             return
         try:
+            #from time import strftime, gmtime
+            #print "[{}] << {}".format(strftime("%H:%M:%S", gmtime()), line)
             messages = json.loads(line)
         except:
             if ("GET / HTTP/1." in line):
@@ -42,6 +44,8 @@ class JSONCommandProtocol(LineReceiver):
 
     def sendMessage(self, dict_):
         line = json.dumps(dict_)
+        from time import strftime, gmtime
+        #print "[{}] >> {}".format(strftime("%H:%M:%S", gmtime()), line)
         self.sendLine(line)
 
     def drop(self):
@@ -109,13 +113,18 @@ class SyncClientProtocol(JSONCommandProtocol):
             settings = user[1]
             room = settings["room"]["name"] if settings.has_key("room") else None
             file_ = settings["file"] if settings.has_key("file") else None
+            roomControlled = settings["roomControlled"] if ((settings.has_key("roomControlled") and settings["roomControlled"] == room)) else None
             if(settings.has_key("event")):
                 if(settings["event"].has_key("joined")):
-                    self._client.userlist.addUser(username, room, file_)
+                    self._client.userlist.addUser(username, room, file_, roomControlled)
                 elif(settings["event"].has_key("left")):
                     self._client.removeUser(username)
+                elif((settings["event"].has_key("forcedRoomChange")) and (username == self._client.getUsername())):
+                    self._client.setRoom(room)
+                    self._client.ui.updateRoomName(room)
             else:
-                self._client.userlist.modUser(username, room, file_)
+                roomControlled = settings["roomControlled"] if ((settings.has_key("roomControlled") and settings["roomControlled"] == room)) else None
+                self._client.userlist.modUser(username, room, file_, roomControlled)
 
     def handleSet(self, settings):
         for set_ in settings.iteritems():
@@ -139,6 +148,19 @@ class SyncClientProtocol(JSONCommandProtocol):
         self.sendSet({"file": file_})
         self.sendList()
 
+    def sendRoomControlledSetting(self, roomControlled, controlPassword):
+        controlData = {}
+        controlData["roomName"] = roomControlled
+        controlData["controlPassword"] = controlPassword
+        self.sendSet({"roomControlled": controlData})
+
+    def requestControlledRoom(self, controlPassword):
+        roomRequest = {}
+        roomRequest["controlPassword"] = controlPassword
+        self.sendSet({"roomControlled": roomRequest})
+        pass
+
+
     def handleList(self, userList):
         self._client.userlist.clearList()
         for room in userList.iteritems():
@@ -146,8 +168,9 @@ class SyncClientProtocol(JSONCommandProtocol):
             for user in room[1].iteritems():
                 userName = user[0]
                 file_ = user[1]['file'] if user[1]['file'] <> {} else None
+                roomControlled = user[1]['roomControlled']
                 position = user[1]['position']
-                self._client.userlist.addUser(userName, roomName, file_, position, noMessage=True)
+                self._client.userlist.addUser(userName, roomName, file_, roomControlled, position, noMessage=True)
         self._client.userlist.showUserList()
 
     def sendList(self):
@@ -234,7 +257,7 @@ class SyncServerProtocol(JSONCommandProtocol):
         self._pingService = PingService()
         self._clientLatencyCalculation = 0
         self._clientLatencyCalculationArrivalTime = 0
-        
+
     def __hash__(self):
         return hash('|'.join((
             self.transport.getPeer().host,
@@ -313,6 +336,20 @@ class SyncServerProtocol(JSONCommandProtocol):
                 self._factory.watcherSetRoom(self, roomName)
             elif command == "file":
                 self._factory.watcherSetFile(self, set_[1])
+            elif command == "roomControlled":
+                if set_[1].has_key("controlPassword") and set_[1].has_key("roomName"):
+                    controlPassword = set_[1]["controlPassword"]
+                    roomName = set_[1]["roomName"]
+                    if self._factory._isControlPasswordCorrect(roomName, controlPassword) == True:
+                        self._factory.watcherSetRoomControlled(self, roomName)
+                    else:
+                        pass
+                elif set_[1].has_key("controlPassword"):
+                    controlPassword = set_[1]["controlPassword"]
+                    roomName = self._factory.getRoomFromControlPassword(controlPassword)
+                    self._factory.watcherSetRoom(self, roomName, True)
+                    self._factory.watcherSetRoomControlled(self, roomName)
+
 
     def sendSet(self, setting):
         self.sendMessage({"Set": setting})
@@ -320,7 +357,7 @@ class SyncServerProtocol(JSONCommandProtocol):
     def sendRoomSetting(self, roomName):
         self.sendSet({"room": {"name": roomName}})
 
-    def sendUserSetting(self, username, roomName, file_, event):
+    def sendUserSetting(self, username, roomName, file_, event, roomControlled=None):
         room = {"name": roomName}
         user = {}
         user[username] = {}
@@ -329,22 +366,26 @@ class SyncServerProtocol(JSONCommandProtocol):
             user[username]["file"] = file_
         if(event):
             user[username]["event"] = event
+        if(roomControlled and roomControlled == roomName):
+            user[username]["roomControlled"] = roomControlled
         self.sendSet({"user": user})
 
-    def _addUserOnList(self, userlist, roomPositions, watcher):
+    def _addUserOnList(self, userlist, roomPositions, roomControlled, watcher):
         if (not userlist.has_key(watcher.room)):
             userlist[watcher.room] = {}
             roomPositions[watcher.room] = watcher.getRoomPosition()
         userlist[watcher.room][watcher.name] = {
+                                                "roomControlled": watcher.roomControlled if watcher.roomControlled else None,
                                                 "file": watcher.file if watcher.file else {},
                                                 "position": roomPositions[watcher.room] if roomPositions[watcher.room] else 0
                                                 }
     def sendList(self):
         userlist = {}
         roomPositions = {}
+        roomControlled = {}
         watchers = self._factory.getAllWatchers(self)
         for watcher in watchers.itervalues():
-            self._addUserOnList(userlist, roomPositions, watcher)
+            self._addUserOnList(userlist, roomPositions, roomControlled, watcher)
         self.sendMessage({"List": userlist})
 
     @requireLogged
@@ -364,7 +405,7 @@ class SyncServerProtocol(JSONCommandProtocol):
                     }
         ping = {
                 "latencyCalculation": self._pingService.newTimestamp(),
-                "serverRtt": self._pingService.getRtt() 
+                "serverRtt": self._pingService.getRtt()
                 }
         if(self._clientLatencyCalculation):
             ping["clientLatencyCalculation"] = self._clientLatencyCalculation + processingTime
@@ -443,9 +484,9 @@ class PingService(object):
             self._avrRtt = self._rtt
         self._avrRtt = self._avrRtt * PING_MOVING_AVERAGE_WEIGHT + self._rtt * (1 - PING_MOVING_AVERAGE_WEIGHT)
         if(senderRtt < self._rtt):
-            self._fd = self._avrRtt/2 + (self._rtt - senderRtt)
+            self._fd = self._avrRtt / 2 + (self._rtt - senderRtt)
         else:
-            self._fd = self._avrRtt/2
+            self._fd = self._avrRtt / 2
 
     def getLastForwardDelay(self):
         return self._fd
