@@ -9,7 +9,7 @@ from syncplay.protocols import SyncClientProtocol
 from syncplay import utils, constants
 from syncplay.messages import getMessage
 import threading
-from syncplay.constants import PRIVACY_SENDHASHED_MODE, PRIVACY_DONTSEND_MODE,\
+from syncplay.constants import PRIVACY_SENDHASHED_MODE, PRIVACY_DONTSEND_MODE, \
     PRIVACY_HIDDENFILENAME, FILENAME_STRIP_REGEX
 # <MAL DISABLE>
 libMal = None
@@ -20,12 +20,12 @@ except ImportError:
 '''
 # </MAL DISABLE>
 class SyncClientFactory(ClientFactory):
-    def __init__(self, client, retry = constants.RECONNECT_RETRIES):
+    def __init__(self, client, retry=constants.RECONNECT_RETRIES):
         self._client = client
         self.retry = retry
         self._timesTried = 0
         self.reconnecting = False
-        
+
     def buildProtocol(self, addr):
         self._timesTried = 0
         return SyncClientProtocol(self._client)
@@ -42,7 +42,7 @@ class SyncClientFactory(ClientFactory):
             self._timesTried += 1
             self._client.ui.showMessage(getMessage("en", "reconnection-attempt-notification"))
             self.reconnecting = True
-            reactor.callLater(0.1*(2**self._timesTried), connector.connect)
+            reactor.callLater(0.1 * (2 ** self._timesTried), connector.connect)
         else:
             message = getMessage("en", "disconnection-notification")
             self._client.ui.showErrorMessage(message)
@@ -52,13 +52,13 @@ class SyncClientFactory(ClientFactory):
             self._client.ui.showErrorMessage(getMessage("en", "connection-failed-notification"))
         else:
             self.clientConnectionLost(connector, reason)
-        
+
     def resetRetrying(self):
         self._timesTried = 0
 
     def stopRetrying(self):
         self._timesTried = self.retry
-    
+
 class SyncplayClient(object):
     def __init__(self, playerClass, ui, config):
         self.protocolFactory = SyncClientFactory(self)
@@ -82,39 +82,39 @@ class SyncplayClient(object):
             self.__getUserlistOnLogon = False
         self._playerClass = playerClass
         self._config = config
-        
+
         self._running = False
         self._askPlayerTimer = None
-        
+
         self._lastPlayerUpdate = None
         self._playerPosition = 0.0
         self._playerPaused = True
-        
+
         self._lastGlobalUpdate = None
         self._globalPosition = 0.0
         self._globalPaused = 0.0
         self._userOffset = 0.0
         self._speedChanged = False
-        
+
         self._warnings = self._WarningManager(self._player, self.userlist, self.ui)
         self._malUpdater = MalUpdater(config["malUsername"], config["malPassword"], self.ui)
-        
+
     def initProtocol(self, protocol):
         self._protocol = protocol
-        
+
     def destroyProtocol(self):
         if(self._protocol):
             self._protocol.drop()
         self._protocol = None
-        
+
     def initPlayer(self, player):
         self._player = player
         self.scheduleAskPlayer()
-    
+
     def scheduleAskPlayer(self, when=constants.PLAYER_ASK_DELAY):
         self._askPlayerTimer = task.LoopingCall(self.askPlayer)
         self._askPlayerTimer.start(when)
-        
+
     def askPlayer(self):
         if(not self._running):
             return
@@ -135,7 +135,7 @@ class SyncplayClient(object):
         _playerDiff = abs(self.getPlayerPosition() - position)
         _globalDiff = abs(self.getGlobalPosition() - position)
         seeked = _playerDiff > constants.SEEK_THRESHOLD and _globalDiff > constants.SEEK_THRESHOLD
-        return pauseChange, seeked 
+        return pauseChange, seeked
 
     def updatePlayerStatus(self, paused, position):
         position -= self.getUserOffset()
@@ -147,7 +147,7 @@ class SyncplayClient(object):
             if((pauseChange or seeked) and self._protocol):
                 if(seeked):
                     self.playerPositionBeforeLastSeek = self.getGlobalPosition()
-                self._protocol.sendState(self.getPlayerPosition(), self.getPlayerPaused(), seeked, None, True)        
+                self._protocol.sendState(self.getPlayerPosition(), self.getPlayerPaused(), seeked, None, True)
 
     def getLocalState(self):
         paused = self.getPlayerPaused()
@@ -157,7 +157,7 @@ class SyncplayClient(object):
             return position, paused, _, pauseChange
         else:
             return None, None, None, None
-    
+
     def _initPlayerState(self, position, paused):
         if(self.userlist.currentUser.file):
             self.setPosition(position)
@@ -246,10 +246,10 @@ class SyncplayClient(object):
         if(madeChangeOnPlayer):
             self.askPlayer()
         self._executePlaystateHooks(position, paused, doSeek, setBy, messageAge)
-        
+
     def getUserOffset(self):
         return self._userOffset
-     
+
     def setUserOffset(self, time):
         self._userOffset = time
         self.setPosition(self.getGlobalPosition())
@@ -273,7 +273,7 @@ class SyncplayClient(object):
         position = self._playerPosition
         if(not self._playerPaused):
             diff = time.time() - self._lastPlayerUpdate
-            position += diff 
+            position += diff
         return position
 
     def getPlayerPaused(self):
@@ -282,8 +282,8 @@ class SyncplayClient(object):
                 return self.getGlobalPaused()
             else:
                 return True
-        return self._playerPaused 
-    
+        return self._playerPaused
+
     def getGlobalPosition(self):
         if not self._lastGlobalUpdate:
             return 0.0
@@ -291,18 +291,18 @@ class SyncplayClient(object):
         if not self._globalPaused:
             position += time.time() - self._lastGlobalUpdate
         return position
-    
+
     def getGlobalPaused(self):
         if(not self._lastGlobalUpdate):
             return True
-        return self._globalPaused 
-    
+        return self._globalPaused
+
     def updateFile(self, filename, duration, path):
         if not path:
             return
         try:
             size = os.path.getsize(path)
-        except OSError: #file not accessible (stream?)
+        except OSError: file not accessible (stream?)
             size = 0
         rawfilename = filename
         filename, size = self.__executePrivacySettings(filename, size)
@@ -313,11 +313,11 @@ class SyncplayClient(object):
             message = getMessage("en", "mal-noprivacy-notification")
             self.ui.showErrorMessage(message)
             self.givenmalprivacywarning = True
-            
-        
+
+
     def __executePrivacySettings(self, filename, size):
         if (self._config['filenamePrivacyMode'] == PRIVACY_SENDHASHED_MODE):
-            filename = utils.hashFilename(filename) 
+            filename = utils.hashFilename(filename)
         elif (self._config['filenamePrivacyMode'] == PRIVACY_DONTSEND_MODE):
             filename = PRIVACY_HIDDENFILENAME
         if (self._config['filesizePrivacyMode'] == PRIVACY_SENDHASHED_MODE):
@@ -333,108 +333,99 @@ class SyncplayClient(object):
 
     def setUsername(self, username):
         self.userlist.currentUser.username = username
-    
+
     def getUsername(self):
         return self.userlist.currentUser.username
-    
+
     def setRoom(self, roomName):
         self.userlist.currentUser.room = roomName
-        
+
     def sendRoom(self):
         room = self.userlist.currentUser.room
         if(self._protocol and self._protocol.logged and room):
             self._protocol.sendRoomSetting(room)
             self.getUserList()
-            
+
+    def setAndSendControlledRoom(self, controlPassword):
+        room = self.userlist.currentUser.room
+        if(self._protocol and self._protocol.logged and room):
+            self._protocol.sendRoomControlledSetting(room, controlPassword)
+            self.getUserList()
+
     def getRoom(self):
         return self.userlist.currentUser.room
-    
+
     def getUserList(self):
         if(self._protocol and self._protocol.logged):
             self._protocol.sendList()
-    
+
     def showUserList(self):
         self.userlist.showUserList()
-    
+
     def getPassword(self):
         return self._serverPassword
-    
+
     def setPosition(self, position):
-        position += self.getUserOffset() 
+        position += self.getUserOffset()
         if(self._player and self.userlist.currentUser.file):
             if(position < 0):
                 position = 0
-                self._protocol.sendState(self.getPlayerPosition(), self.getPlayerPaused(), True, None, True) 
+                self._protocol.sendState(self.getPlayerPosition(), self.getPlayerPaused(), True, None, True)
             self._player.setPosition(position)
-    
+
     def setPaused(self, paused):
         if(self._player and self.userlist.currentUser.file):
             self._player.setPaused(paused)
-            
+
     def generateControlPassword(self):
         import random
         import string
         random.seed()
-        
+
         def randomletters(quantity):
             return ''.join(random.choice(string.ascii_uppercase) for _ in xrange(quantity))
 
         def randomnumbers(quantity):
             return ''.join(random.choice(string.digits) for _ in xrange(quantity))
-        
-        controlPassword = "{}-{}-{}".format(randomletters(2),randomnumbers(3),randomnumbers(3)) 
+
+        controlPassword = "{}-{}-{}".format(randomletters(2), randomnumbers(3), randomnumbers(3))
         return controlPassword
-            
+
     def createControlledRoom(self):
         controlPassword = self.generateControlPassword()
         # TODO (Client): Send request to server; handle success and failure
         # TODO (Server): Process request, send response
         self.ui.showMessage("Attempting to create controlled room suffix with password '{}'...".format(controlPassword))
-        
-        # Simulation:
-        self.controlledRoomCreated(controlPassword, self.getRoomFromControlPassword(controlPassword))
-        
-    def getRoomFromControlPassword(self, controlPassword):
-        # TODO: Move to server, use proper salt
-        def stripControlPassword(controlPassword):
-            CONTROLPASS_STRIP_REGEX = u"[-~_\.\[\](): '\"]"
-            return re.sub(CONTROLPASS_STRIP_REGEX,"",controlPassword)
-        salt = "Hammer"
-        controlPassword = salt.join(stripControlPassword(controlPassword[:64].upper()))
-        roomName = hashlib.sha256(controlPassword).hexdigest()[:12]
-        return roomName
-    
+        self._protocol.requestControlledRoom(controlPassword)
+
     def controlPasswordCorrect(self, controlPassword, roomName):
         controlPassword = self.getRoomFromControlPassword(controlPassword)
         roomName = roomName[-12:]
-        return (controlPassword.upper() == roomName.upper())  
-        
+        return (controlPassword.upper() == roomName.upper())
+
     def controlledRoomCreated(self, controlPassword, roomName):
         # NOTE (Client): Triggered by protocol to handle createControlledRoom when room is created
         self.ui.showMessage("Created controlled room suffix '{}' with password '{}'. Please save this information for future reference!".format(roomName, controlPassword))
         self.setRoom(roomName)
         self.sendRoom()
         self.ui.updateRoomName(roomName)
-        
+
     def controlledRoomCreationError(self, errormsg):
         # NOTE (Client): Triggered by protocol to handle createControlledRoom if controlled rooms are not supported by server or if password is malformed
         # NOTE (Server): Triggered by protocol to handle createControlledRoom if password is malformed
         self.ui.showErrorMessage("Failed to create the controlled room suffix for the following reason: {}.".format(errormsg))
-        
+
     def identifyAsController(self, controlPassword):
         # TODO (Client): Send identification to server; handle success and failure
         # TODO (Server): Process request, send response 
         self.ui.showMessage("Identifying as room controller with password '{}'...".format(controlPassword))
-        if self.controlPasswordCorrect(controlPassword, self.userlist.currentUser.room) == True:
-            self.ui.showMessage("Control password correct ^_^")
-        else:
-            self.ui.showErrorMessage("Control password incorrect >_<")
-        
+        self.setAndSendControlledRoom(controlPassword)
+
     def controllerIdentificationError(self, errormsg):
         # NOTE (Client): Triggered by protocol handling identiedAsController, e.g. on server response or not supported error
         # NOTE (Server): Relevant error given in response to identifyAsController if password is wrong
         self.ui.showErrorMessage("Failed to identify as a room controller for the following reason: {}.".format(errormsg))
-        
+
     def notControllerError(self, errormsg):
         # NOTE (Client): Trigger when client gets a "not controller" error from server (e.g. due to illegal pauses, unpauses and seeks)
         # NOTE (Server): Give "not controller" error when users try to perform illegal pause, unpause or seek
@@ -451,7 +442,7 @@ class SyncplayClient(object):
         reactor.connectTCP(host, port, self.protocolFactory)
         reactor.run()
 
-    def stop(self, promptForAction = False):
+    def stop(self, promptForAction=False):
         if not self._running:
             return
         self._running = False
@@ -484,7 +475,7 @@ class SyncplayClient(object):
         def checkWarnings(self):
             self._checkIfYouReAloneInTheRoom()
             self._checkRoomForSameFiles()
-                
+
         def _checkRoomForSameFiles(self):
             if (not self._userlist.areAllFilesInRoomSame()):
                 self._ui.showMessage(getMessage("en", "room-files-not-same"), True)
@@ -492,7 +483,7 @@ class SyncplayClient(object):
                     self._warnings["room-files-not-same"]['timer'].start(constants.WARNING_OSD_MESSAGES_LOOP_INTERVAL, True)
             elif(self._warnings["room-files-not-same"]['timer'].running):
                 self._warnings["room-files-not-same"]['timer'].stop()
-                
+
         def _checkIfYouReAloneInTheRoom(self):
             if (self._userlist.areYouAloneInRoom()):
                 self._ui.showMessage(getMessage("en", "alone-in-the-room"), True)
@@ -500,24 +491,25 @@ class SyncplayClient(object):
                     self._warnings["alone-in-the-room"]['timer'].start(constants.WARNING_OSD_MESSAGES_LOOP_INTERVAL, True)
             elif(self._warnings["alone-in-the-room"]['timer'].running):
                 self._warnings["alone-in-the-room"]['timer'].stop()
-                
+
         def __displayMessageOnOSD(self, warningName):
             if (constants.OSD_WARNING_MESSAGE_DURATION > self._warnings[warningName]["displayedFor"]):
-                self._ui.showOSDMessage(getMessage("en", warningName ), constants.WARNING_OSD_MESSAGES_LOOP_INTERVAL)
+                self._ui.showOSDMessage(getMessage("en", warningName), constants.WARNING_OSD_MESSAGES_LOOP_INTERVAL)
                 self._warnings[warningName]["displayedFor"] += constants.WARNING_OSD_MESSAGES_LOOP_INTERVAL
             else:
                 self._warnings[warningName]["displayedFor"] = 0
                 self._warnings[warningName]["timer"].stop()
-            
+
 
 
 class SyncplayUser(object):
-    def __init__(self, username = None, room = None, file_ = None, position = 0):
+    def __init__(self, username=None, room=None, file_=None, roomControlled=None, position=0):
         self.username = username
         self.room = room
         self.file = file_
         self.lastPosition = position
-        
+        self.roomControlled = roomControlled
+
     def setFile(self, filename, duration, size):
         file_ = {
                  "name": filename,
@@ -525,19 +517,19 @@ class SyncplayUser(object):
                  "size":size
                  }
         self.file = file_
-    
-    def isFileSame(self, file_):       
+
+    def isFileSame(self, file_):
         if(not self.file):
             return False
         sameName = utils.sameFilename(self.file['name'], file_['name'])
         sameSize = utils.sameFilesize(self.file['size'], file_['size'])
         sameDuration = utils.sameFileduration(self.file['duration'], file_['duration'])
         return sameName and sameSize and sameDuration
-      
+
     def __lt__(self, other):
         return self.username < other.username
-      
-      
+
+
 class MalUpdater(object):
     def __init__(self, username, password, ui):
         self._filePlayingFor = 0.0
@@ -568,7 +560,7 @@ class MalUpdater(object):
         self._filename = filename
         self._filePlayingFor = 0.0
         self._lastHookUpdate = None
-        
+
     def _updateMal(self):
         try:
             self._fileDuration = 0  # Disable playingHook
@@ -578,13 +570,13 @@ class MalUpdater(object):
                 if(len(results) > 0):
                     result = results[0]
                     message = "Updating MAL with: \"{}\", episode: {}".format(result.mainTitle, result.episodeBeingWatched)
-                    reactor.callFromThread(self._ui.showMessage,(message),)
+                    reactor.callFromThread(self._ui.showMessage, (message),)
                     options = {"tags": ["syncplay"]}
                     manager.updateEntryOnMal(result, options)
             self._filename = ""  # Make sure no updates will be performed until switch
         except:
-            reactor.callFromThread(self._ui.showMessage, ("MAL Update failure"),) 
-        
+            reactor.callFromThread(self._ui.showMessage, ("MAL Update failure"),)
+
 class SyncplayUserlist(object):
     def __init__(self, ui, client):
         self.currentUser = SyncplayUser()
@@ -593,11 +585,11 @@ class SyncplayUserlist(object):
         self._client = client
         self._roomUsersChanged = True
 
-    def __showUserChangeMessage(self, username, room, file_):
+    def __showUserChangeMessage(self, username, room, file_, roomControlled):
         controlStatus = None
         #TODO: Add controller identification notification trigger code
         if(controlStatus):
-            if (controlStatus == "Controller" and room and self.currentUser.room == room): 
+            if (controlStatus == "Controller" and room and self.currentUser.room == room):
                 self.ui.showMessage("{} has identified as a room controller. If there are controllers in a room then only they can pause, unpause and seek.".format(username))
             return
         if(room and not file_):
@@ -617,7 +609,7 @@ class SyncplayUserlist(object):
                 differentSize = not utils.sameFilesize(self.currentUser.file['size'], file_['size'])
                 differentDuration = not utils.sameFileduration(self.currentUser.file['duration'], file_['duration'])
                 if(differentName):
-                    differences.append("filename") 
+                    differences.append("filename")
                 if(differentSize):
                     differences.append("size")
                 if(differentDuration):
@@ -625,48 +617,51 @@ class SyncplayUserlist(object):
                 message = getMessage("en", "file-differences-notification") + ", ".join(differences)
                 self.ui.showMessage(message)
 
-    def addUser(self, username, room, file_, position = 0, noMessage = False):
+    def addUser(self, username, room, file_, roomControlled, position=0, noMessage=False):
         if(username == self.currentUser.username):
             self.currentUser.lastPosition = position
             return
-        user = SyncplayUser(username, room, file_, position)
+        user = SyncplayUser(username, room, file_, roomControlled, position)
         self._users[username] = user
         if(not noMessage):
-            self.__showUserChangeMessage(username, room, file_)
+            self.__showUserChangeMessage(username, room, file_, None) #???
         self.userListChange()
-            
+
     def removeUser(self, username):
         if(self._users.has_key(username)):
             self._users.pop(username)
             message = getMessage("en", "left-notification").format(username)
             self.ui.showMessage(message)
         self.userListChange()
-        
-    def __displayModUserMessage(self, username, room, file_, user):
-        if (file_ and not user.isFileSame(file_)):
-            self.__showUserChangeMessage(username, room, file_)
-        elif (room and room != user.room):
-            self.__showUserChangeMessage(username, room, None)
 
-    def modUser(self, username, room, file_):
+    def __displayModUserMessage(self, username, room, file_, user, roomControlled):
+        if (file_ and not user.isFileSame(file_)):
+            self.__showUserChangeMessage(username, room, file_, None)
+        elif (room and room != user.room):
+            self.__showUserChangeMessage(username, room, None, None)
+
+    def modUser(self, username, room, file_, roomControlled):
         if(self._users.has_key(username)):
             user = self._users[username]
-            self.__displayModUserMessage(username, room, file_, user)
+            self.__displayModUserMessage(username, room, file_, user, roomControlled)
             user.room = room
             if file_:
                 user.file = file_
+            if roomControlled:
+                user.roomControlled = roomControlled
         elif(username == self.currentUser.username):
-            self.__showUserChangeMessage(username, room, file_)
+            self.currentUser.roomControlled = roomControlled
+            self.__showUserChangeMessage(username, room, file_, roomControlled)
         else:
-            self.addUser(username, room, file_)
+            self.addUser(username, room, file_, roomControlled)
         self.userListChange()
-                    
+
     def areAllFilesInRoomSame(self):
         for user in self._users.itervalues():
             if(user.room == self.currentUser.room and user.file and not self.currentUser.isFileSame(user.file)):
                 return False
         return True
-    
+
     def areYouAloneInRoom(self):
         for user in self._users.itervalues():
             if(user.room == self.currentUser.room):
@@ -682,13 +677,13 @@ class SyncplayUserlist(object):
     def userListChange(self):
         self._roomUsersChanged = True
         self.ui.userListChange()
-        
+
     def roomStateConfirmed(self):
         self._roomUsersChanged = False
-    
+
     def hasRoomStateChanged(self):
         return self._roomUsersChanged
-        
+
     def showUserList(self):
         rooms = {}
         for user in self._users.itervalues():
@@ -698,44 +693,44 @@ class SyncplayUserlist(object):
         if(self.currentUser.room not in rooms):
                 rooms[self.currentUser.room] = []
         rooms[self.currentUser.room].append(self.currentUser)
-        
+
         self.ui.showUserList(self.currentUser, rooms)
-        
+
     def clearList(self):
         self._users = {}
-              
+
 class UiManager(object):
     def __init__(self, client, ui):
         self._client = client
         self.__ui = ui
-    
-    def showMessage(self, message, noPlayer = False, noTimestamp = False):
+
+    def showMessage(self, message, noPlayer=False, noTimestamp=False):
         if(not noPlayer): self.showOSDMessage(message)
         self.__ui.showMessage(message, noTimestamp)
-    
+
     def showUserList(self, currentUser, rooms):
         self.__ui.showUserList(currentUser, rooms)
-        
-    def showOSDMessage(self, message, duration = constants.OSD_DURATION):
+
+    def showOSDMessage(self, message, duration=constants.OSD_DURATION):
         if(self._client._player):
             self._client._player.displayMessage(message, duration * 1000)
-    
-    def showErrorMessage(self, message, criticalerror = False):
+
+    def showErrorMessage(self, message, criticalerror=False):
         self.__ui.showErrorMessage(message, criticalerror)
 
     def promptFor(self, prompt):
         return self.__ui.promptFor(prompt)
-    
+
     def userListChange(self):
         self.__ui.userListChange()
 
     def markEndOfUserlist(self):
         self.__ui.markEndOfUserlist()
-        
+
     def updateRoomName(self, roomName):
         self.__ui.updateRoomName(roomName)
-    
+
     def drop(self):
         self.__ui.drop()
 
-    
+
