@@ -302,7 +302,7 @@ class SyncplayClient(object):
             return
         try:
             size = os.path.getsize(path)
-        except OSError: file not accessible (stream?)
+        except OSError:  # file not accessible (stream?)
             size = 0
         rawfilename = filename
         filename, size = self.__executePrivacySettings(filename, size)
