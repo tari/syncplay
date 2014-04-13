@@ -350,7 +350,6 @@ class SyncplayClient(object):
         room = self.userlist.currentUser.room
         if(self._protocol and self._protocol.logged and room):
             self._protocol.sendRoomControlledSetting(room, controlPassword)
-            self.getUserList()
 
     def getRoom(self):
         return self.userlist.currentUser.room
@@ -586,13 +585,10 @@ class SyncplayUserlist(object):
         self._roomUsersChanged = True
 
     def __showUserChangeMessage(self, username, room, file_, roomControlled):
-        controlStatus = None
-        #TODO: Add controller identification notification trigger code
-        if(controlStatus):
-            if (controlStatus == "Controller" and room and self.currentUser.room == room):
+        if(room and roomControlled):
+            if (self.currentUser.room == room):
                 self.ui.showMessage("{} has identified as a room controller. If there are controllers in a room then only they can pause, unpause and seek.".format(username))
-            return
-        if(room and not file_):
+        if(room and not file_ and not roomControlled):
             message = getMessage("en", "room-join-notification").format(username, room)
             self.ui.showMessage(message)
         elif (room and file_):
@@ -624,7 +620,7 @@ class SyncplayUserlist(object):
         user = SyncplayUser(username, room, file_, roomControlled, position)
         self._users[username] = user
         if(not noMessage):
-            self.__showUserChangeMessage(username, room, file_, None) #???
+            self.__showUserChangeMessage(username, room, file_, roomControlled)
         self.userListChange()
 
     def removeUser(self, username):
@@ -648,6 +644,8 @@ class SyncplayUserlist(object):
             if file_:
                 user.file = file_
             if roomControlled:
+                if (room == self.currentUser.room) and (roomControlled != user.roomControlled):
+                    self.ui.showMessage("{} has identified as a room controller. If there are controllers in a room then only they can pause, unpause and seek.".format(username))
                 user.roomControlled = roomControlled
         elif(username == self.currentUser.username):
             self.currentUser.roomControlled = roomControlled
@@ -732,5 +730,3 @@ class UiManager(object):
 
     def drop(self):
         self.__ui.drop()
-
-
