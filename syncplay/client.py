@@ -1,4 +1,3 @@
-#coding:utf8
 import hashlib
 import os.path
 import time
@@ -11,14 +10,8 @@ from syncplay.messages import getMessage
 import threading
 from syncplay.constants import PRIVACY_SENDHASHED_MODE, PRIVACY_DONTSEND_MODE, \
     PRIVACY_HIDDENFILENAME, FILENAME_STRIP_REGEX
-# <MAL DISABLE>
-libMal = None
-'''try:
-    import libMal
-except ImportError:
-    libMal = None
-'''
-# </MAL DISABLE>
+import collections
+
 class SyncClientFactory(ClientFactory):
     def __init__(self, client, retry=constants.RECONNECT_RETRIES):
         self._client = client
@@ -66,9 +59,8 @@ class SyncplayClient(object):
         self.userlist = SyncplayUserlist(self.ui, self)
         self._protocol = None
         self._player = None
-        self.givenmalprivacywarning = False
         if(config['room'] == None or config['room'] == ''):
-            config['room'] = config['name'] # ticket #58
+            config['room'] = config['name']  # ticket #58
         self.defaultRoom = config['room']
         self.playerPositionBeforeLastSeek = 0.0
         self.setUsername(config['name'])
@@ -97,7 +89,8 @@ class SyncplayClient(object):
         self._speedChanged = False
 
         self._warnings = self._WarningManager(self._player, self.userlist, self.ui)
-        self._malUpdater = MalUpdater(config["malUsername"], config["malPassword"], self.ui)
+        if constants.LIST_RELATIVE_CONFIGS and self._config.has_key('loadedRelativePaths'):
+                self.ui.showMessage(getMessage("en", "relative-config-notification").format("; ".join(self._config['loadedRelativePaths'])), True)
 
     def initProtocol(self, protocol):
         self._protocol = protocol
@@ -166,25 +159,30 @@ class SyncplayClient(object):
             return madeChangeOnPlayer
 
     def _rewindPlayerDueToTimeDifference(self, position, setBy):
+        hideFromOSD = not constants.SHOW_SAME_ROOM_OSD
         self.setPosition(position)
-        self.ui.showMessage(getMessage("en", "rewind-notification").format(setBy))
+        self.ui.showMessage(getMessage("en", "rewind-notification").format(setBy), hideFromOSD)
         madeChangeOnPlayer = True
         return madeChangeOnPlayer
 
     def _serverUnpaused(self, setBy):
+        hideFromOSD = not constants.SHOW_SAME_ROOM_OSD
         self._player.setPaused(False)
         madeChangeOnPlayer = True
-        self.ui.showMessage(getMessage("en", "unpause-notification").format(setBy))
+        self.ui.showMessage(getMessage("en", "unpause-notification").format(setBy), hideFromOSD)
         return madeChangeOnPlayer
 
     def _serverPaused(self, setBy):
-        self.setPosition(self.getGlobalPosition())
+        hideFromOSD = not constants.SHOW_SAME_ROOM_OSD
+        if constants.SYNC_ON_PAUSE == True:
+            self.setPosition(self.getGlobalPosition())
         self._player.setPaused(True)
         madeChangeOnPlayer = True
-        self.ui.showMessage(getMessage("en", "pause-notification").format(setBy))
+        self.ui.showMessage(getMessage("en", "pause-notification").format(setBy), hideFromOSD)
         return madeChangeOnPlayer
 
     def _serverSeeked(self, position, setBy):
+        hideFromOSD = not constants.SHOW_SAME_ROOM_OSD
         if(self.getUsername() <> setBy):
             self.playerPositionBeforeLastSeek = self.getPlayerPosition()
             self.setPosition(position)
@@ -192,18 +190,19 @@ class SyncplayClient(object):
         else:
             madeChangeOnPlayer = False
         message = getMessage("en", "seek-notification").format(setBy, utils.formatTime(self.playerPositionBeforeLastSeek), utils.formatTime(position))
-        self.ui.showMessage(message)
+        self.ui.showMessage(message, hideFromOSD)
         return madeChangeOnPlayer
 
     def _slowDownToCoverTimeDifference(self, diff, setBy):
+        hideFromOSD = not constants.SHOW_SLOWDOWN_OSD
         if(constants.SLOWDOWN_KICKIN_THRESHOLD < diff and not self._speedChanged):
             self._player.setSpeed(constants.SLOWDOWN_RATE)
             self._speedChanged = True
-            self.ui.showMessage(getMessage("en", "slowdown-notification").format(setBy))
+            self.ui.showMessage(getMessage("en", "slowdown-notification").format(setBy), hideFromOSD)
         elif(self._speedChanged and diff < constants.SLOWDOWN_RESET_THRESHOLD):
             self._player.setSpeed(1.00)
             self._speedChanged = False
-            self.ui.showMessage(getMessage("en", "revert-notification"))
+            self.ui.showMessage(getMessage("en", "revert-notification"), hideFromOSD)
         madeChangeOnPlayer = True
         return madeChangeOnPlayer
 
@@ -232,7 +231,6 @@ class SyncplayClient(object):
         if(self.userlist.hasRoomStateChanged() and not paused):
             self._warnings.checkWarnings()
             self.userlist.roomStateConfirmed()
-        self._malUpdater.playingHook(position, paused)
 
     def updateGlobalState(self, position, paused, doSeek, setBy, messageAge):
         if(self.__getUserlistOnLogon):
@@ -308,12 +306,6 @@ class SyncplayClient(object):
         filename, size = self.__executePrivacySettings(filename, size)
         self.userlist.currentUser.setFile(filename, duration, size)
         self.sendFile()
-        self._malUpdater.fileChangeHook(rawfilename, duration)
-        if libMal and filename <> rawfilename and self.givenmalprivacywarning == False:
-            message = getMessage("en", "mal-noprivacy-notification")
-            self.ui.showErrorMessage(message)
-            self.givenmalprivacywarning = True
-
 
     def __executePrivacySettings(self, filename, size):
         if (self._config['filenamePrivacyMode'] == PRIVACY_SENDHASHED_MODE):
@@ -375,6 +367,7 @@ class SyncplayClient(object):
     def setPaused(self, paused):
         if(self._player and self.userlist.currentUser.file):
             self._player.setPaused(paused)
+
 
     def generateControlPassword(self):
         import random
@@ -438,6 +431,7 @@ class SyncplayClient(object):
             self._playerClass.run(self, self._config['playerPath'], self._config['file'], self._config['playerArgs'])
             self._playerClass = None
         self.protocolFactory = SyncClientFactory(self)
+        port = int(port)
         reactor.connectTCP(host, port, self.protocolFactory)
         reactor.run()
 
@@ -478,7 +472,7 @@ class SyncplayClient(object):
         def _checkRoomForSameFiles(self):
             if (not self._userlist.areAllFilesInRoomSame()):
                 self._ui.showMessage(getMessage("en", "room-files-not-same"), True)
-                if(not self._warnings["room-files-not-same"]['timer'].running):
+                if(constants.SHOW_OSD_WARNINGS and not self._warnings["room-files-not-same"]['timer'].running):
                     self._warnings["room-files-not-same"]['timer'].start(constants.WARNING_OSD_MESSAGES_LOOP_INTERVAL, True)
             elif(self._warnings["room-files-not-same"]['timer'].running):
                 self._warnings["room-files-not-same"]['timer'].stop()
@@ -486,7 +480,7 @@ class SyncplayClient(object):
         def _checkIfYouReAloneInTheRoom(self):
             if (self._userlist.areYouAloneInRoom()):
                 self._ui.showMessage(getMessage("en", "alone-in-the-room"), True)
-                if(not self._warnings["alone-in-the-room"]['timer'].running):
+                if(constants.SHOW_OSD_WARNINGS and not self._warnings["alone-in-the-room"]['timer'].running):
                     self._warnings["alone-in-the-room"]['timer'].start(constants.WARNING_OSD_MESSAGES_LOOP_INTERVAL, True)
             elif(self._warnings["alone-in-the-room"]['timer'].running):
                 self._warnings["alone-in-the-room"]['timer'].stop()
@@ -526,55 +520,13 @@ class SyncplayUser(object):
         return sameName and sameSize and sameDuration
 
     def __lt__(self, other):
-        return self.username < other.username
+        return self.username.lower() < other.username.lower()
 
-
-class MalUpdater(object):
-    def __init__(self, username, password, ui):
-        self._filePlayingFor = 0.0
-        self._lastHookUpdate = None
-        self._fileDuration = 0
-        self._filename = ""
-        self.__username = username
-        self.__password = password
-        self._ui = ui
-
-    def _updatePlayingTime(self, paused):
-        if (not self._lastHookUpdate):
-            self._lastHookUpdate = time.time()
-        if (not paused):
-            self._filePlayingFor += time.time() - self._lastHookUpdate
-        self._lastHookUpdate = time.time()
-
-    def playingHook(self, position, paused):
-        if(self._fileDuration == 0):
-            return
-        self._updatePlayingTime(paused)
-        pastMark = position / self._fileDuration > 0.4
-        if self._filePlayingFor > 30 and pastMark:
-            threading.Thread(target=self._updateMal).start()
-
-    def fileChangeHook(self, filename, duration):
-        self._fileDuration = duration
-        self._filename = filename
-        self._filePlayingFor = 0.0
-        self._lastHookUpdate = None
-
-    def _updateMal(self):
-        try:
-            self._fileDuration = 0  # Disable playingHook
-            if(libMal and self._filename and self.__username and self.__password):
-                manager = libMal.Manager(self.__username, self.__password)
-                results = manager.findEntriesOnMal(self._filename)
-                if(len(results) > 0):
-                    result = results[0]
-                    message = "Updating MAL with: \"{}\", episode: {}".format(result.mainTitle, result.episodeBeingWatched)
-                    reactor.callFromThread(self._ui.showMessage, (message),)
-                    options = {"tags": ["syncplay"]}
-                    manager.updateEntryOnMal(result, options)
-            self._filename = ""  # Make sure no updates will be performed until switch
-        except:
-            reactor.callFromThread(self._ui.showMessage, ("MAL Update failure"),)
+    def __repr__(self, *args, **kwargs):
+        if(self.file):
+            return "{}: {} ({}, {})".format(self.username, self.file['name'], self.file['duration'], self.file['size'])
+        else:
+            return "{}".format(self.username)
 
 class SyncplayUserlist(object):
     def __init__(self, ui, client):
@@ -584,22 +536,35 @@ class SyncplayUserlist(object):
         self._client = client
         self._roomUsersChanged = True
 
-    def __showUserChangeMessage(self, username, room, file_, roomControlled):
+    def isRoomSame(self, room):
+        if (room and self.currentUser.room and self.currentUser.room == room):
+            return True
+        else:
+            return False
+
+    def __showUserChangeMessage(self, username, room, file_, roomControlled, oldRoom=None):
+        if(room):
+            if self.isRoomSame(room) or self.isRoomSame(oldRoom):
+                showOnOSD = constants.SHOW_SAME_ROOM_OSD
+            else:
+                showOnOSD = constants.SHOW_DIFFERENT_ROOM_OSD
+            hideFromOSD = not showOnOSD
+
         if(room and roomControlled):
             if (self.currentUser.room == room):
                 self.ui.showMessage("{} has identified as a room controller. If there are controllers in a room then only they can pause, unpause and seek.".format(username))
         if(room and not file_ and not roomControlled):
             message = getMessage("en", "room-join-notification").format(username, room)
-            self.ui.showMessage(message)
+            self.ui.showMessage(message, hideFromOSD)
         elif (room and file_):
             duration = utils.formatTime(file_['duration'])
             message = getMessage("en", "playing-notification").format(username, file_['name'], duration)
             if(self.currentUser.room <> room or self.currentUser.username == username):
                 message += getMessage("en", "playing-notification/room-addendum").format(room)
-            self.ui.showMessage(message)
+            self.ui.showMessage(message, hideFromOSD)
             if(self.currentUser.file and not self.currentUser.isFileSame(file_) and self.currentUser.room == room):
                 message = getMessage("en", "file-different-notification").format(username)
-                self.ui.showMessage(message)
+                self.ui.showMessage(message, not constants.SHOW_OSD_WARNINGS)
                 differences = []
                 differentName = not utils.sameFilename(self.currentUser.file['name'], file_['name'])
                 differentSize = not utils.sameFilesize(self.currentUser.file['size'], file_['size'])
@@ -611,7 +576,8 @@ class SyncplayUserlist(object):
                 if(differentDuration):
                     differences.append("duration")
                 message = getMessage("en", "file-differences-notification") + ", ".join(differences)
-                self.ui.showMessage(message)
+                self.ui.showMessage(message, not constants.SHOW_OSD_WARNINGS)
+
 
     def addUser(self, username, room, file_, roomControlled, position=0, noMessage=False):
         if(username == self.currentUser.username):
@@ -624,22 +590,28 @@ class SyncplayUserlist(object):
         self.userListChange()
 
     def removeUser(self, username):
+        hideFromOSD = not constants.SHOW_DIFFERENT_ROOM_OSD
+        if(self._users.has_key(username)):
+            user = self._users[username]
+            if user.room:
+                if self.isRoomSame(user.room):
+                    hideFromOSD = not constants.SHOW_SAME_ROOM_OSD
         if(self._users.has_key(username)):
             self._users.pop(username)
             message = getMessage("en", "left-notification").format(username)
-            self.ui.showMessage(message)
+            self.ui.showMessage(message, hideFromOSD)
         self.userListChange()
-
-    def __displayModUserMessage(self, username, room, file_, user, roomControlled):
+    def __displayModUserMessage(self, username, room, file_, user, roomControlled, oldRoom):
         if (file_ and not user.isFileSame(file_)):
-            self.__showUserChangeMessage(username, room, file_, None)
+            self.__showUserChangeMessage(username, room, file_, None, oldRoom)
         elif (room and room != user.room):
-            self.__showUserChangeMessage(username, room, None, None)
+            self.__showUserChangeMessage(username, room, None, None, oldRoom)
 
     def modUser(self, username, room, file_, roomControlled):
         if(self._users.has_key(username)):
             user = self._users[username]
-            self.__displayModUserMessage(username, room, file_, user, roomControlled)
+            oldRoom = user.room if user.room else None
+            self.__displayModUserMessage(username, room, file_, user, roomControlled, oldRoom)
             user.room = room
             if file_:
                 user.file = file_
@@ -691,11 +663,17 @@ class SyncplayUserlist(object):
         if(self.currentUser.room not in rooms):
                 rooms[self.currentUser.room] = []
         rooms[self.currentUser.room].append(self.currentUser)
-
+        rooms = self.sortList(rooms)
         self.ui.showUserList(self.currentUser, rooms)
 
     def clearList(self):
         self._users = {}
+
+    def sortList(self, rooms):
+        for room in rooms:
+            rooms[room] = sorted(rooms[room])
+        rooms = collections.OrderedDict(sorted(rooms.items(), key=lambda s: s[0].lower()))
+        return rooms
 
 class UiManager(object):
     def __init__(self, client, ui):
@@ -710,7 +688,7 @@ class UiManager(object):
         self.__ui.showUserList(currentUser, rooms)
 
     def showOSDMessage(self, message, duration=constants.OSD_DURATION):
-        if(self._client._player):
+        if(constants.SHOW_OSD and self._client._player):
             self._client._player.displayMessage(message, duration * 1000)
 
     def showErrorMessage(self, message, criticalerror=False):

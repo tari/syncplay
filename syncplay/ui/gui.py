@@ -216,7 +216,7 @@ class MainWindow(QtGui.QMainWindow):
                         t = self._syncplayClient.getUserOffset() + sign * t
                 self._syncplayClient.setUserOffset(t)
             else:
-                self.showMessage("Invalid offset value", True)
+                self.showErrorMessage("Invalid offset value")
 
     def createControlledRoom(self):
         self._syncplayClient.createControlledRoom()
@@ -227,7 +227,6 @@ class MainWindow(QtGui.QMainWindow):
                 "")
         if ok and controlpassword != '':
             self._syncplayClient.identifyAsController(controlpassword)
-
 
     def openUserGuide(self):
         if sys.platform.startswith('linux'):

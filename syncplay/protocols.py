@@ -34,11 +34,7 @@ class JSONCommandProtocol(LineReceiver):
             #print "[{}] << {}".format(strftime("%H:%M:%S", gmtime()), line)
             messages = json.loads(line)
         except:
-            if ("GET / HTTP/1." in line):
-                self.handleHttpRequest(line)
-                self.drop()
-            else:
-                self.dropWithError(getMessage("en", "not-json-server-error").format(line))
+            self.dropWithError(getMessage("en", "not-json-server-error").format(line))
             return
         self.handleMessages(messages)
 
@@ -213,9 +209,6 @@ class SyncClientProtocol(JSONCommandProtocol):
         position, paused, doSeek, stateChange = self._client.getLocalState()
         self.sendState(position, paused, doSeek, latencyCalculation, stateChange)
 
-    def handleHttpRequest(self, request):
-        pass
-
     def sendState(self, position, paused, doSeek, latencyCalculation, stateChange=False):
         state = {}
         positionAndPausedIsSet = position is not None and paused is not None
@@ -314,9 +307,9 @@ class SyncServerProtocol(JSONCommandProtocol):
                 return
             self._factory.addWatcher(self, username, roomName, roomPassword)
             self._logged = True
-            self.sendHello()
+            self.sendHello(version)
 
-    def sendHello(self):
+    def sendHello(self, clientVersion):
         hello = {}
         username = self._factory.watcherGetUsername(self)
         hello["username"] = username
@@ -324,7 +317,7 @@ class SyncServerProtocol(JSONCommandProtocol):
         room = self._factory.watcherGetRoom(self)
         if(room): hello["room"] = {"name": room}
         hello["version"] = syncplay.version
-        hello["motd"] = self._factory.getMotd(userIp, username, room)
+        hello["motd"] = self._factory.getMotd(userIp, username, room, clientVersion)
         self.sendMessage({"Hello": hello})
 
     @requireLogged
@@ -453,9 +446,6 @@ class SyncServerProtocol(JSONCommandProtocol):
             self._pingService.receiveMessage(latencyCalculation, clientRtt)
         if(self.serverIgnoringOnTheFly == 0):
             self._factory.updateWatcherState(self, position, paused, doSeek, self._pingService.getLastForwardDelay())
-
-    def handleHttpRequest(self, request):
-        self.sendLine(self._factory.gethttpRequestReply())
 
     def handleError(self, error):
         self.dropWithError(error["message"])  # TODO: more processing and fallbacking

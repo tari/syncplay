@@ -8,6 +8,14 @@ UI_TIME_FORMAT = "[%X] "
 CONFIG_NAMES = [".syncplay", "syncplay.ini"] #Syncplay searches first to last
 DEFAULT_CONFIG_NAME_WINDOWS = "syncplay.ini"
 DEFAULT_CONFIG_NAME_LINUX = ".syncplay" 
+RECENT_CLIENT_THRESHOLD = "1.2.7" #This and higher considered 'recent' clients (no warnings)
+WARN_OLD_CLIENTS = True #Use MOTD to inform old clients to upgrade
+SHOW_OSD = True # Sends Syncplay messages to media player OSD
+SHOW_OSD_WARNINGS = True # Show warnings if playing different file, alone in room
+SHOW_SLOWDOWN_OSD = True # Show notifications of slowing down / reverting on time difference
+SHOW_SAME_ROOM_OSD = True  # Show OSD notifications for events relating to room user is in
+SHOW_DIFFERENT_ROOM_OSD = False # Show OSD notifications for events relating to room user is not in
+LIST_RELATIVE_CONFIGS = True # Print list of relative configs loaded
 
 #Changing these might be ok
 REWIND_THRESHOLD = 4
@@ -23,6 +31,7 @@ WARNING_OSD_MESSAGES_LOOP_INTERVAL = 1
 SHOW_REWIND_ON_DESYNC_CHECKBOX = False
 SHOW_TOOLTIPS = True
 MERGE_PLAYPAUSE_BUTTONS = False
+SYNC_ON_PAUSE = True # Client seek to global position - subtitles may disappear on some media players
 
 #Usually there's no need to adjust these
 FILENAME_STRIP_REGEX = u"[-~_\.\[\](): ]" 

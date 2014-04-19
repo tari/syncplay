@@ -1,0 +1,39 @@
+﻿Merge remote-tracking branch 'origin/master' into controlledRooms
+
+Conflicts:
+	syncplay/client.py
+	syncplay/server.py
+	syncplay/ui/gui.py
+#
+# It looks like you may be committing a merge.
+# If this is not correct, please remove the file
+#	.git/MERGE_HEAD
+# and try again.
+
+
+# Please enter the commit message for your changes. Lines starting
+# with '#' will be ignored, and an empty message aborts the commit.
+# On branch controlledRooms
+# All conflicts fixed but you are still merging.
+#   (use "git commit" to conclude merge)
+#
+# Changes to be committed:
+#
+#	modified:   Makefile
+#	modified:   resources/lua/intf/syncplay.lua
+#	modified:   syncplay/__init__.py
+#	modified:   syncplay/client.py
+#	modified:   syncplay/constants.py
+#	deleted:    syncplay/ircBot.py
+#	modified:   syncplay/messages.py
+#	modified:   syncplay/players/mplayer.py
+#	modified:   syncplay/protocols.py
+#	modified:   syncplay/server.py
+#	modified:   syncplay/ui/ConfigurationGetter.py
+#	modified:   syncplay/ui/GuiConfiguration.py
+#	modified:   syncplay/ui/__init__.py
+#	modified:   syncplay/ui/gui.py
+#	modified:   syncplay/utils.py
+#	modified:   syncplayServer.py
+#
+

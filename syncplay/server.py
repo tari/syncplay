@@ -1,4 +1,4 @@
-#coding:utf8
+# coding:utf8
 import hashlib
 from twisted.internet import task, reactor
 from twisted.internet.protocol import Factory
@@ -11,67 +11,19 @@ from syncplay.messages import getMessage
 import codecs
 import os
 from string import Template
-from ircBot import Bot as IRCBot
 import argparse
 import re
 
 class SyncFactory(Factory):
-    def __init__(self, password='', motdFilePath=None, httpReplyFilePath=None, ircConfig=None, ircVerbose=False):
+    def __init__(self, password='', motdFilePath=None):
         print getMessage("en", "welcome-server-notification").format(syncplay.version)
         if(password):
             password = hashlib.md5(password).hexdigest()
         self.password = password
         self._motdFilePath = motdFilePath
-        self._httpReplyFilePath = httpReplyFilePath
         self._rooms = {}
         self._roomStates = {}
         self._roomUpdate = threading.RLock()
-        self.ircVerbose = ircVerbose
-        ircConnectionData = self.readIrcConfig(ircConfig)
-        if(ircConnectionData):
-            self.setupIRCBot(ircConnectionData)
-
-    def readIrcConfig(self, ircConfig):
-        if(ircConfig and os.path.isfile(ircConfig)):
-            cfg = codecs.open(ircConfig, "r", "utf-8-sig").read()
-            cfg = cfg.splitlines()
-            ircConnectionData = {
-                                 "server": "",
-                                 "port": "",
-                                 "nick": "",
-                                 "channel": ""
-                                 }
-            for line in cfg:
-                if("irc.server: " in line):
-                    ircConnectionData['server'] = line.split(": ")[1]
-                elif("irc.serverPort: " in line):
-                    ircConnectionData['port'] = int(line.split(": ")[1])
-                elif("irc.botName: " in line):
-                    ircConnectionData['nick'] = line.split(": ")[1]
-                elif("irc.channel: " in line):
-                    ircConnectionData['channel'] = line.split(": ")[1]
-            return ircConnectionData
-
-    def setupIRCBot(self, ircConnectionData):
-            botFunctions = {
-                    "pause": self.ircPauseRoom,
-                    "getRooms": self.getRooms,
-                    "setRoomPosition": self.ircSetRoomPosition,
-                    "getRoomPosition": self.getRoomPosition,
-                    "getRoomUsers": self.getRoomUsernames,
-                    "isRoomPaused": self.isRoomPaused,
-                    }
-            try:
-                self.ircBot = IRCBot(
-                       ircConnectionData['server'],
-                       ircConnectionData['port'],
-                       ircConnectionData['nick'],
-                       ircConnectionData['channel'],
-                       botFunctions,
-                       )
-                self.ircBot.start()
-            except:
-                print "IRC Bot could not be started, please check your configuration"
 
     def buildProtocol(self, addr):
         return SyncServerProtocol(self)
@@ -101,15 +53,13 @@ class SyncFactory(Factory):
         reactor.callLater(0.1, watcher.scheduleSendState)
         l = lambda w: w.sendUserSetting(username, roomName, None, {"joined": True}, None)
         self.broadcast(watcherProtocol, l)
-        if(self.ircVerbose):
-            self.ircBot.sp_joined(username, roomName)
 
     def getWatcher(self, watcherProtocol):
         for room in self._rooms.itervalues():
             if(room.has_key(watcherProtocol)):
                 return room[watcherProtocol]
 
-    def getAllWatchers(self, watcherProtocol): #TODO: Optimize me
+    def getAllWatchers(self, watcherProtocol):  # TODO: Optimize me
         watchers = {}
         for room in self._rooms.itervalues():
             for watcher in room.itervalues():
@@ -137,24 +87,26 @@ class SyncFactory(Factory):
             position += timePassedSinceSet
         return paused, position
 
-    def getMotd(self, userIp, username, room):
+    def getMotd(self, userIp, username, room, clientVersion):
+        oldClient = False
+        if constants.WARN_OLD_CLIENTS:
+            if int(clientVersion.replace(".", "")) < int(constants.RECENT_CLIENT_THRESHOLD.replace(".", "")):
+                oldClient = True
         if(self._motdFilePath and os.path.isfile(self._motdFilePath)):
             tmpl = codecs.open(self._motdFilePath, "r", "utf-8-sig").read()
             args = dict(version=syncplay.version, userIp=userIp, username=username, room=room)
             try:
                 motd = Template(tmpl).substitute(args)
+                if oldClient:
+                    motdwarning = getMessage("en", "new-syncplay-available-motd-message").format(clientVersion)
+                    motd = "{}\n{}".format(motdwarning, motd)
                 return motd if len(motd) < constants.SERVER_MAX_TEMPLATE_LENGTH else getMessage("en", "server-messed-up-motd-too-long").format(constants.SERVER_MAX_TEMPLATE_LENGTH, len(motd))
             except ValueError:
                 return getMessage("en", "server-messed-up-motd-unescaped-placeholders")
+        elif oldClient:
+            return getMessage("en", "new-syncplay-available-motd-message").format(clientVersion)
         else:
             return ""
-
-    def gethttpRequestReply(self):
-        if(self._httpReplyFilePath and os.path.isfile(self._httpReplyFilePath)):
-            tmpl = codecs.open(self._httpReplyFilePath, "r", "utf-8-sig").read()
-            return tmpl.encode('utf-8')
-        else:
-            return getMessage("en", "server-default-http-reply")
 
     def sendState(self, watcherProtocol, doSeek=False, forcedUpdate=False):
         watcher = self.getWatcher(watcherProtocol)
@@ -193,16 +145,6 @@ class SyncFactory(Factory):
             self._roomStates[watcher.room]["setBy"] = setter.name
             self._roomStates[watcher.room]["lastUpdate"] = setter.lastUpdate
 
-
-    def __notifyIrcBot(self, position, paused, doSeek, watcher, oldPosition, pauseChanged):
-        if (self.ircVerbose):
-            if (paused and pauseChanged):
-                self.ircBot.sp_paused(watcher.name, watcher.room)
-            elif (not paused and pauseChanged):
-                self.ircBot.sp_unpaused(watcher.name, watcher.room)
-            if (doSeek and position):
-                self.ircBot.sp_seek(watcher.name, oldPosition, position, watcher.room)
-
     def updateWatcherState(self, watcherProtocol, position, paused, doSeek, messageAge):
         watcher = self.getWatcher(watcherProtocol)
         if(not watcher):
@@ -219,7 +161,6 @@ class SyncFactory(Factory):
                 self.__updatePositionState(position, doSeek or pauseChanged, watcher)
             forceUpdate = self.__shouldServerForceUpdateOnRoom(pauseChanged, doSeek)
             if(forceUpdate):
-                self.__notifyIrcBot(position, paused, doSeek, watcher, oldPosition, pauseChanged)
                 l = lambda w: self.sendState(w, doSeek, forceUpdate)
                 self.broadcastRoom(watcher.watcherProtocol, l)
 
@@ -232,14 +173,13 @@ class SyncFactory(Factory):
         self._removeWatcherFromTheRoom(watcherProtocol)
         watcher.deactivate()
         self._deleteRoomIfEmpty(watcher.room)
-        if(self.ircVerbose):
-            self.ircBot.sp_left(watcher.name, watcher.room)
 
     def watcherGetUsername(self, watcherProtocol):
         return self.getWatcher(watcherProtocol).name
 
     def watcherGetRoom(self, watcherProtocol):
         return self.getWatcher(watcherProtocol).room
+
 
     def watcherSetRoom(self, watcherProtocol, room, forced=False):
         watcher = self._removeWatcherFromTheRoom(watcherProtocol)
@@ -266,8 +206,6 @@ class SyncFactory(Factory):
         watcher.file = file_
         l = lambda w: w.sendUserSetting(watcher.name, watcher.room, watcher.file, None, None)
         self.broadcast(watcherProtocol, l)
-        if(self.ircVerbose):
-            self.ircBot.sp_fileplaying(watcher.name, watcher.file['name'], watcher.room)
 
     def watcherSetRoomControlled(self, watcherProtocol, roomControlled):
         watcher = self.getWatcher(watcherProtocol)
@@ -292,6 +230,7 @@ class SyncFactory(Factory):
         roomName = roomName[-12:]
         return (controlPassword.upper() == roomName.upper())
 
+
     def broadcastRoom(self, sender, what):
         room = self._rooms[self.watcherGetRoom(sender)]
         if(room):
@@ -304,65 +243,6 @@ class SyncFactory(Factory):
             for room in self._rooms.itervalues():
                     for receiver in room:
                         what(receiver)
-
-    def _findUserByUsername(self, username):
-        with self._roomUpdate:
-            for room in self._rooms.itervalues():
-                for user in room.itervalues():
-                    if user.name == username:
-                        return user
-
-    def ircPauseRoom(self, setBy, paused):
-        user = self._findUserByUsername(setBy)
-        if(user):
-            with self._roomUpdate:
-                if(self._roomStates[user.room]['paused'] != paused):
-                    self._roomStates[user.room]['paused'] = paused
-                    self._roomStates[user.room]['setBy'] = "IRC: " + setBy
-                    if(paused):
-                        self.ircBot.sp_paused("IRC: " + user.name, user.room)
-                    elif(not paused):
-                        self.ircBot.sp_unpaused("IRC: " + user.name, user.room)
-                    l = lambda w: self.sendState(w, False, 0, True)
-                    self.broadcastRoom(user.watcherProtocol, l)
-
-
-    def getRooms(self):
-        return self._rooms.keys()
-
-    def getRoomPosition(self, room):
-        with self._roomUpdate:
-            if room in self._roomStates:
-                return self._roomStates[room]["position"]
-
-    def ircSetRoomPosition(self, setBy, time):
-        user = self._findUserByUsername(setBy)
-        if(user):
-            with self._roomUpdate:
-                oldPosition = self._roomStates[user.room]['paused']
-                if(oldPosition - time > 1):
-                    self._roomStates[user.room]['paused'] = time
-                    self._roomStates[user.room]['setBy'] = "IRC: " + setBy
-                    self.ircBot.sp_seek(user.name, oldPosition, time, user.room)
-                    l = lambda w: self.sendState(w, True, 0, True)
-                    self.broadcastRoom(user.watcherProtocol, l)
-
-
-    def getRoomUsernames(self, room):
-        l = []
-        with self._roomUpdate:
-            if room in self._rooms:
-                for user in self._rooms[room].itervalues():
-                    if(user.file):
-                        l.append({'nick': user.name, 'file': user.file['name'], "duration": user.file['duration']})
-                    else:
-                        l.append({'nick': user.name, 'file': None, "duration": None})
-        return l
-
-    def isRoomPaused(self, room):
-        with self._roomUpdate:
-            if room in self._roomStates:
-                return self._roomStates[room]["paused"]
 
 class SyncIsolatedFactory(SyncFactory):
     def broadcast(self, sender, what):
@@ -438,6 +318,3 @@ class ConfigurationGetter(object):
         self._argparser.add_argument('--password', metavar='password', type=str, nargs='?', help=getMessage("en", "server-password-argument"))
         self._argparser.add_argument('--isolate-rooms', action='store_true', help=getMessage("en", "server-isolate-room-argument"))
         self._argparser.add_argument('--motd-file', metavar='file', type=str, nargs='?', help=getMessage("en", "server-motd-argument"))
-        self._argparser.add_argument('--http-reply-file', metavar='file', type=str, nargs='?', help=getMessage("en", "server-http-reply-argument"))
-        self._argparser.add_argument('--irc-verbose', action='store_true', help=getMessage("en", "server-irc-verbose"))
-        self._argparser.add_argument('--irc-config-file', metavar='file', type=str, nargs='?', help=getMessage("en", "server-irc-config"))

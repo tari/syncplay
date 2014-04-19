@@ -6,9 +6,9 @@ from syncplay import constants, utils
 from syncplay.messages import getMessage
 from syncplay.players.playerFactory import PlayerFactory
 import codecs
-try: 
+try:
     from syncplay.ui.GuiConfiguration import GuiConfiguration
-    from PySide import QtGui #@UnresolvedImport
+    from PySide import QtGui  # @UnresolvedImport
     from PySide.QtCore import QCoreApplication
 except ImportError:
     GuiConfiguration = None
@@ -16,7 +16,7 @@ except ImportError:
 class InvalidConfigValue(Exception):
     def __init__(self, message):
         Exception.__init__(self, message)
-        
+
 class ConfigurationGetter(object):
     def __init__(self):
         self._config = {
@@ -33,19 +33,16 @@ class ConfigurationGetter(object):
                         "file": None,
                         "playerArgs": [],
                         "playerClass": None,
-						"slowOnDesync": True,
+                        "slowOnDesync": True,
                         "rewindOnDesync": True,
-                        "malUsername": "",
-                        "malPassword": "",
-                        "malPassword": "",
                         "filenamePrivacyMode": constants.PRIVACY_SENDRAW_MODE,
                         "filesizePrivacyMode": constants.PRIVACY_SENDRAW_MODE,
                         "pauseOnLeave": False,
                         "clearGUIData": False
                         }
-        
+
         #
-        #Custom validation in self._validateArguments
+        # Custom validation in self._validateArguments
         #
         self._required = [
                           "host",
@@ -55,7 +52,7 @@ class ConfigurationGetter(object):
                           "playerPath",
                           "playerClass",
                          ]
-        
+
         self._boolean = [
                          "debug",
                          "forceGuiPrompt",
@@ -70,11 +67,10 @@ class ConfigurationGetter(object):
         self._iniStructure = {
                         "server_data": ["host", "port", "password"],
                         "client_settings": ["name", "room", "playerPath", "slowOnDesync", "rewindOnDesync", "forceGuiPrompt", "filenamePrivacyMode", "filesizePrivacyMode", "pauseOnLeave"],
-                        "mal": ["malPassword", "malUsername"]
                         }
 
         #
-        #Watch out for the method self._overrideConfigWithArgs when you're adding custom multi-word command line arguments
+        # Watch out for the method self._overrideConfigWithArgs when you're adding custom multi-word command line arguments
         #
         self._argparser = argparse.ArgumentParser(description=getMessage("en", "argument-description"),
                                          epilog=getMessage("en", "argument-epilog"))
@@ -90,10 +86,22 @@ class ConfigurationGetter(object):
         self._argparser.add_argument('file', metavar='file', type=str, nargs='?', help=getMessage("en", "file-argument"))
         self._argparser.add_argument('--clear-gui-data', action='store_true', help=getMessage("en", "clear-gui-data-argument"))
         self._argparser.add_argument('_args', metavar='options', type=str, nargs='*', help=getMessage("en", "args-argument"))
-  
+
         self._playerFactory = PlayerFactory()
-        
+
     def _validateArguments(self):
+        def _isPortValid(varToTest):
+            try:
+                if (varToTest == "" or varToTest is None):
+                    return False
+                if (str(varToTest).isdigit() == False):
+                    return False
+                varToTest = int(varToTest)
+                if (varToTest > 65535 or varToTest < 1):
+                    return False
+                return True
+            except:
+                return False
         for key in self._boolean:
             if(self._config[key] == "True"):
                 self._config[key] = True
@@ -112,9 +120,11 @@ class ConfigurationGetter(object):
             elif(key == "host"):
                 self._config["host"], self._config["port"] = self._splitPortAndHost(self._config["host"])
                 hostNotValid = (self._config["host"] == "" or self._config["host"] is None)
-                portNotValid = (self._config["port"] == "" or self._config["port"] is None)
-                if(hostNotValid or portNotValid):
+                portNotValid = (_isPortValid(self._config["port"]) == False)
+                if(hostNotValid):
                     raise InvalidConfigValue("Hostname can't be empty")
+                elif(portNotValid):
+                    raise InvalidConfigValue("Port must be valid")
             elif(self._config[key] == "" or self._config[key] is None):
                 raise InvalidConfigValue("{} can't be empty".format(key.capitalize()))
 
@@ -134,19 +144,26 @@ class ConfigurationGetter(object):
                 if(key == "clear_gui_data"):
                     key = "clearGUIData"
                 self._config[key] = val
-            
+
     def _splitPortAndHost(self, host):
         port = constants.DEFAULT_PORT if not self._config["port"] else self._config["port"]
         if(host):
             if ':' in host:
                 host, port = host.split(':', 1)
-        return host, int(port)
+                try:
+                    port = int(port)
+                except ValueError:
+                    try:
+                        port = port.encode('ascii', 'ignore')
+                    except:
+                        port = ""
+        return host, port
 
     def _checkForPortableFile(self):
         path = utils.findWorkingDir()
         for name in constants.CONFIG_NAMES:
             if(os.path.isfile(os.path.join(path, name))):
-                return os.path.join(path, name) 
+                return os.path.join(path, name)
 
     def _getConfigurationFilePath(self):
         configFile = self._checkForPortableFile()
@@ -163,10 +180,10 @@ class ConfigurationGetter(object):
                     configFile = os.path.join(os.getenv('HOME', '.'), constants.DEFAULT_CONFIG_NAME_LINUX)
                 else:
                     configFile = os.path.join(os.getenv('APPDATA', '.'), constants.DEFAULT_CONFIG_NAME_WINDOWS)
-                
+
         return configFile
 
-    def _parseConfigFile(self, iniPath, createConfig = True):
+    def _parseConfigFile(self, iniPath, createConfig=True):
         parser = SafeConfigParserUnicode()
         if(not os.path.isfile(iniPath)):
             if(createConfig):
@@ -179,7 +196,7 @@ class ConfigurationGetter(object):
                 for option in options:
                     if(parser.has_option(section, option)):
                         self._config[option] = parser.get(section, option)
-        
+
     def _checkConfig(self):
         try:
             self._validateArguments()
@@ -191,12 +208,12 @@ class ConfigurationGetter(object):
             except:
                 sys.exit()
 
-    def _promptForMissingArguments(self, error = None):
+    def _promptForMissingArguments(self, error=None):
         if(self._config['noGui']):
             print getMessage("en", "missing-arguments-error")
             sys.exit()
         elif(GuiConfiguration):
-            gc = GuiConfiguration(self._config, error = error)
+            gc = GuiConfiguration(self._config, error=error)
             gc.setAvailablePaths(self._playerFactory.getAvailablePlayerPaths())
             gc.run()
             return gc.getProcessedConfiguration()
@@ -221,10 +238,10 @@ class ConfigurationGetter(object):
             for option in options:
                 if(self.__wasOptionChanged(parser, section, option)):
                     changed = True
-                parser.set(section, option, unicode(self._config[option]))
+                parser.set(section, option, unicode(self._config[option]).replace('%', '%%'))
         if(changed):
             parser.write(codecs.open(iniPath, "wb", "utf_8_sig"))
-        
+
 
     def _forceGuiPrompt(self):
         try:
@@ -251,31 +268,35 @@ class ConfigurationGetter(object):
 
     def _loadRelativeConfiguration(self):
         locations = self.__getRelativeConfigLocations()
+        loadedPaths = []
         for location in locations:
             for name in constants.CONFIG_NAMES:
-                path = location + os.path.sep + name 
-                self._parseConfigFile(path, createConfig = False)
+                path = location + os.path.sep + name
+                if(os.path.isfile(path)):
+                    loadedPaths.append("'" + os.path.normpath(path) + "'")
+                self._parseConfigFile(path, createConfig=False)
                 self._checkConfig()
+        return loadedPaths
 
     def getConfiguration(self):
         iniPath = self._getConfigurationFilePath()
         self._parseConfigFile(iniPath)
         args = self._argparser.parse_args()
         self._overrideConfigWithArgs(args)
-        #Arguments not validated yet - booleans are still text values
-        if(self._config['forceGuiPrompt'] == "True" or not self._config['file']): 
+        # Arguments not validated yet - booleans are still text values
+        if(self._config['forceGuiPrompt'] == "True" or not self._config['file']):
             self._forceGuiPrompt()
         self._checkConfig()
         self._saveConfig(iniPath)
         if(self._config['file']):
-            self._loadRelativeConfiguration()
+            self._config['loadedRelativePaths'] = self._loadRelativeConfiguration()
         if(not self._config['noGui']):
             from syncplay.vendor import qt4reactor
             if QCoreApplication.instance() is None:
                 self.app = QtGui.QApplication(sys.argv)
             qt4reactor.install()
         return self._config
-    
+
 class SafeConfigParserUnicode(SafeConfigParser):
     def write(self, fp):
         """Write an .ini-format representation of the configuration state."""
