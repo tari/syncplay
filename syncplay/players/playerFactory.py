@@ -26,3 +26,9 @@ class PlayerFactory(object):
             if player.isValidPlayerPath(path):
                 return player.getExpandedPath(path)
         return None
+
+    def fileMustExistForPath(self, path):
+        for player in self._players:
+            if player.isValidPlayerPath(path):
+                return player.validPathIsFile
+        return True

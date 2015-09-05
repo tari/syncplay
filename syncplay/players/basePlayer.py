@@ -1,5 +1,6 @@
 from syncplay import constants
 class BasePlayer(object):
+    validPathIsFile = True
   
     '''
     This method is supposed to 
