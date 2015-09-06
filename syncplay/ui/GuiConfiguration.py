@@ -996,7 +996,4 @@ class ConfigDialog(QtGui.QDialog):
             self.processWidget(self, lambda w: self.loadTooltips(w))
         self.processWidget(self, lambda w: self.loadValues(w))
         self.processWidget(self, lambda w: self.connectChildren(w))
-<<<<<<< 59c177dc765fecd5c778543b36f9626e2e4d3a30
         self.populateEmptyServerList()
-=======
->>>>>>> (Old) XBMC support.

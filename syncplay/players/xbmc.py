@@ -11,23 +11,6 @@ from syncplay import constants
 from syncplay.players.basePlayer import BasePlayer
 
 
-def memoize(f):
-    """Poor man's replacement for py3k's functools.lru_cache."""
-    cache = ([], [])
-    @functools.wraps(f)
-    def wrapper(*args):
-        (ac, rc) = cache
-        if args in ac:
-            return rc[ac.index(args)]
-        if len(ac) >= 256:
-            del ac[0], rc[0]
-        res = f(*args)
-        ac.append(args)
-        rc.append(res)
-        return res
-    return wrapper
-        
-
 class NoActivePlayer(Exception):
     pass
 
@@ -42,6 +25,7 @@ class RpcController(Thread):
         self._connection = None
         self._q = Queue()
         self._stop = False
+        self._barrier = 0
 
     def _call(self, method, **kwargs):
         return getattr(self._connection, method)(**kwargs)
@@ -52,14 +36,35 @@ class RpcController(Thread):
             if p['type'] == 'video':
                 return p['playerid']
 
-    def queue_request(self, f, *args):
+    def _queue_request(self, f, args, barrier, evt):
+        """
+        Queue an RPC which will call f(*args).
+
+        If barrier is True, output from status checks which complete after this
+        request is queued but before it completes will be suppressed. This
+        ensures conflicting playback status will not leak out to the network
+        and cause "fighting".
+        """
         assert self.isAlive()
-        self._q.put((f, args, None))
+        if barrier:
+            # There may be multiple barrier requests queued at any given time,
+            # so we need to track the barrier depth.
+            assert self._barrier >= 0
+            self._barrier += 1
+        self._q.put((f, args, barrier, evt))
+
+    def queue_request(self, f, *args):
+        self._queue_request(f, args, False, None)
+
+    def queue_barrier_request(self, f, *args):
+        self._queue_request(f, args, True, None)
 
     def blocking_request(self, f, *args):
-        assert self.isAlive()
+        """
+        Same as queue_request but blocks until the request completes.
+        """
         evt = Event()
-        self._q.put((f, args, evt))
+        self._queue_request(f, args, True, evt)
         evt.wait()
 
     def stop(self):
@@ -77,16 +82,34 @@ class RpcController(Thread):
 
         # Process RPC requests until asked to stop
         while not self._stop:
-            (f, args, evt) = self._q.get()
-            f(self, *args)
+            (f, args, is_barrier, evt) = self._q.get()
+            # Barriers are always executed; stop suppression
+            if is_barrier:
+                self._barrier -= 1
+                f(self, *args)
+            else:
+                # Skip if a barrier is preventing processing, but requeue. The
+                # caller allows only one status request in flight at a time and
+                # losing that one would be bad.
+                if self._barrier > 0:
+                    # Requeue, but deadlock would be catastrophic. Do not mark
+                    # as complete.
+                    self._q.put_nowait((f, args, is_barrier, evt))
+                    continue
+                else:
+                    f(self, *args)
+            # Mark done
             if evt is not None:
                 evt.set()
 
 
 class XbmcPlayer(BasePlayer):
-    validPathIsFile = False
     # Kind of is, but only selected integral speeds.
     speedSupported = False
+    # Maybe later..
+    customOpenDialog = False
+    secondaryOSDSupported = False
+    osdMessageSeparator = '; '
 
     def __init__(self, client, url, filePath=None):
         from twisted.internet import reactor
@@ -165,7 +188,8 @@ class XbmcPlayer(BasePlayer):
         # Little silly, but need to do the callback in the reactor thread
         self.reactor.callFromThread(d.callback, None)
 
-    def displayMessage(self, message, duration=5000):
+    def displayMessage(self, message, duration=constants.OSD_DURATION * 1000,
+                       secondaryOSD=False):
         self.rpc.queue_request(self._displayMessage, message, duration)
 
     def _displayMessage(self, rpc, message, duration):
@@ -176,7 +200,7 @@ class XbmcPlayer(BasePlayer):
         self.rpc.stop()
 
     def setPaused(self, value):
-        self.rpc.queue_request(self._setPaused, value)
+        self.rpc.queue_barrier_request(self._setPaused, value)
 
     def _setPaused(self, rpc, value):
         pid = rpc._activePlayer()
@@ -194,7 +218,7 @@ class XbmcPlayer(BasePlayer):
             'seconds': int(seconds),
             'milliseconds': int(milliseconds)
         }
-        self.rpc.queue_request(self._setPosition, timespec)
+        self.rpc.queue_barrier_request(self._setPosition, timespec)
 
     def _setPosition(self, rpc, timespec):
         pid = rpc._activePlayer()
@@ -208,26 +232,30 @@ class XbmcPlayer(BasePlayer):
     def openFile(self, filePath, resetPosition=False):
         # TODO should display some warning or whatnot; opening files is flaky for
         # remote hosts.
-        self.rpc.queue_request(self._openFile, filePath, os.path.basename(filePath))
+        self.rpc.queue_barrier_request(self._openFile, filePath, os.path.basename(filePath))
 
     def _openFile(self, rpc, remotePath, name):
         rpc._call('Player.Open', item={'file': remotePath})
         # File change notification is handled by polling
 
     @staticmethod
-    @memoize
     def isValidPlayerPath(path):
         # TODO must be *fast*
         try:
             conn = jsonrpclib.Server(path + '/jsonrpc')
             props = getattr(conn, 'Application.GetProperties')(properties=['name'])
-            if props['name'] == 'XBMC':
+            if props['name'] in ('XBMC', 'Kodi'):
                 version = getattr(conn, 'JSONRPC.Version')()['version']
                 if version['major'] >= 6:
                     return True
         except (IOError, xmlrpclib.Error) as e:
             pass
         return False
+
+    @staticmethod
+    def getPlayerPathErrors(playerPath, filePath):
+        # TODO should be a url, filePath is not supported? Other stuff.
+        return None
 
     @staticmethod
     def getDefaultPlayerPathsList():

@@ -682,7 +682,7 @@ info = dict(
                          # NOTE: py2exe has a hard time detecting zope.interfaces, unconditionally breaking
                          # SyncPlay. Add an empty __init__.py file to your site-packages/zope directory as
                          # a workaround. This is zope's fault for doing tricky import-time things.
-                         'includes': 'twisted, sys, encodings, datetime, os, time, math, PySide, liburl, ast',
+                         'includes': 'twisted, sys, encodings, datetime, os, time, math, PySide, liburl, ast, jsonrpclib',
                          'excludes': 'venv, _ssl, doctest, pdb, unittest, win32clipboard, win32file, win32pdh, win32security, win32trace, win32ui, winxpgui, win32pipe, win32process, Tkinter',
                          'dll_excludes': 'msvcr71.dll, MSVCP90.dll, POWRPROF.dll',
                          'optimize': 2,
