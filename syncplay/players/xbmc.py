@@ -1,106 +1,13 @@
-import functools
-import jsonrpclib
-import os.path
-import xmlrpclib
-
-from httplib import HTTPConnection
-from Queue import Queue
-from threading import Thread, Event
+import random
 
 from syncplay import constants
 from syncplay.players.basePlayer import BasePlayer
 
+from twisted.internet.defer import inlineCallbacks
+
 
 class NoActivePlayer(Exception):
     pass
-
-
-class RpcController(Thread):
-    def __init__(self, url, readyCallback):
-        Thread.__init__(self, name='XBMC RPC Interface')
-        self.daemon = True
-
-        self.readyCallback = readyCallback
-        self.url = url
-        self._connection = None
-        self._q = Queue()
-        self._stop = False
-        self._barrier = 0
-
-    def _call(self, method, **kwargs):
-        return getattr(self._connection, method)(**kwargs)
-
-    def _activePlayer(self):
-        players = self._call('Player.GetActivePlayers')
-        for p in players:
-            if p['type'] == 'video':
-                return p['playerid']
-
-    def _queue_request(self, f, args, barrier, evt):
-        """
-        Queue an RPC which will call f(*args).
-
-        If barrier is True, output from status checks which complete after this
-        request is queued but before it completes will be suppressed. This
-        ensures conflicting playback status will not leak out to the network
-        and cause "fighting".
-        """
-        assert self.isAlive()
-        if barrier:
-            # There may be multiple barrier requests queued at any given time,
-            # so we need to track the barrier depth.
-            assert self._barrier >= 0
-            self._barrier += 1
-        self._q.put((f, args, barrier, evt))
-
-    def queue_request(self, f, *args):
-        self._queue_request(f, args, False, None)
-
-    def queue_barrier_request(self, f, *args):
-        self._queue_request(f, args, True, None)
-
-    def blocking_request(self, f, *args):
-        """
-        Same as queue_request but blocks until the request completes.
-        """
-        evt = Event()
-        self._queue_request(f, args, True, evt)
-        evt.wait()
-
-    def stop(self):
-        def request_stop(_):
-            self._stop = True
-        self.blocking_request(request_stop)
-
-    def run(self):
-        self._connection = jsonrpclib.Server(self.url)
-        # Stop any active players
-        #for player in self._call('Player.GetActivePlayers'):
-        #    self._call('Player.Stop', playerid=player['playerid'])
-        # Fire "ready" callback
-        self.readyCallback(self)
-
-        # Process RPC requests until asked to stop
-        while not self._stop:
-            (f, args, is_barrier, evt) = self._q.get()
-            # Barriers are always executed; stop suppression
-            if is_barrier:
-                self._barrier -= 1
-                f(self, *args)
-            else:
-                # Skip if a barrier is preventing processing, but requeue. The
-                # caller allows only one status request in flight at a time and
-                # losing that one would be bad.
-                if self._barrier > 0:
-                    # Requeue, but deadlock would be catastrophic. Do not mark
-                    # as complete.
-                    self._q.put_nowait((f, args, is_barrier, evt))
-                    continue
-                else:
-                    f(self, *args)
-            # Mark done
-            if evt is not None:
-                evt.set()
 
 
 class XbmcPlayer(BasePlayer):
@@ -115,25 +22,17 @@ class XbmcPlayer(BasePlayer):
         from twisted.internet import reactor
         self.reactor = reactor
         self.client = client
-
+        self.proxy = Proxy(url.encode('ascii', 'replace') + '/jsonrpc')
         self._ping_pending = False
-        self.rpc = RpcController(url + '/jsonrpc', self._rpcReady)
-        self.rpc.start()
-        # Poll the active playing file occasionally to update the client
-        # Late-bind to twisted to sidestep wonky issues with whatever the main
-        # program does to twisted.
-        from twisted.internet.defer import Deferred
+
+        # Poll the active playing file occasionally to update the client.
         from twisted.internet.task import LoopingCall
-        self._Deferred = Deferred
         self._file_props = (None, None, None)
-        self.file_poll = LoopingCall(self._ping_file)
+        self.file_poll = LoopingCall(self.updatePlayingFile)
         self.file_poll.start(1.5)
 
         if filePath:
             self.openFile(filePath)
-
-    def _rpcReady(self, rpc):
-        # RPC handler is ready, so the player is up
         self.reactor.callFromThread(self.client.initPlayer, self)
 
     @staticmethod
@@ -141,21 +40,34 @@ class XbmcPlayer(BasePlayer):
         """Get an instance of the Player."""
         return XbmcPlayer(client, playerPath, filePath)
 
-    def askForStatus(self):
+    def callRemote(self, method, *args, **kwargs):
+        return self.proxy.callRemote(method, *args, **kwargs)
+
+    def _activePlayer(self):
+        d = self.callRemote('Player.GetActivePlayers')
+        def findVideoPlayerId(players):
+            for p in players:
+                if p['type'] == 'video':
+                    return p['playerid']
+        d.addCallback(findVideoPlayerId)
+        return d
+
+    @inlineCallbacks
+    def askForStatus(self, cookie=None):
         """
         Get player pause state and position, passing back to
         client.updatePlayerStatus.
         """
         # Client tends to call this faster than we can get RPC responses. Only
         # queue a new request if there isn't one pending.
-        if not self._ping_pending:
-            self.rpc.queue_request(self._ping_playback)
-            self._ping_pending = True
+        if self._ping_pending:
+            return
+        self._ping_pending = True
 
-    def _ping_playback(self, rpc):
-        pid = rpc._activePlayer()
+        pid = yield self._activePlayer()
         if pid:
-            resp = rpc._call('Player.GetProperties', playerid=pid, properties=['speed', 'time'])
+            resp = yield self.callRemote('Player.GetProperties', playerid=pid,
+                                         properties=['speed', 'time'])
             paused = resp['speed'] == 0
             t = resp['time']
             position = 3600 * t['hours'] + 60 * t['minutes'] + \
@@ -163,50 +75,44 @@ class XbmcPlayer(BasePlayer):
         else:
             paused = True
             position = 0
+        self.client.updatePlayerStatus(paused, position, cookie=cookie)
         self._ping_pending = False
-        self.reactor.callFromThread(self.client.updatePlayerStatus, paused, position)
 
-    def _ping_file(self):
-        d = self._Deferred()
-        self.rpc.queue_request(self._rpc_ping_file, d)
-        return d
-
-    def _rpc_ping_file(self, rpc, d):
-        pid = rpc._activePlayer()
-        if pid:
-            props = rpc._call('Player.GetItem', playerid=pid, properties=['file', 'runtime'])['item']
-            name = props['label']
-            length = props['runtime']   # in seconds
-            path = props['file']
-        else:
+    @inlineCallbacks
+    def updatePlayingFile(self):
+        """Called periodically to check what file is playing."""
+        pid = yield self._activePlayer()
+        if not pid:
             name = length = path = None
-        # Client notifies on every call here, so don't call back unless the file
-        # actually changed.
+        else:
+            props = yield self.callRemote('Player.GetItem', playerid=pid,
+                                          properties=['file', 'runtime'])
+            item = props['item']
+            name = item['label']
+            length = item['runtime']   # in seconds
+            path = item['file']
+        # client.updateFile pushes data out to the network, assuming it
+        # changed. Only do so if there actually was a change.
         if (name, length, path) != self._file_props:
             self._file_props = (name, length, path)
-            self.reactor.callFromThread(self.client.updateFile, name, length, path)
-        # Little silly, but need to do the callback in the reactor thread
-        self.reactor.callFromThread(d.callback, None)
+            self.client.updateFile(name, length, path)
 
     def displayMessage(self, message, duration=constants.OSD_DURATION * 1000,
                        secondaryOSD=False):
-        self.rpc.queue_request(self._displayMessage, message, duration)
-
-    def _displayMessage(self, rpc, message, duration):
-        rpc._call('GUI.ShowNotification', title='SyncPlay Client', message=message, image='info')
+        self.callRemote('GUI.ShowNotification', title='SyncPlay',
+                        message=message, image='info')
 
     def drop(self):
         self.file_poll.stop()
-        self.rpc.stop()
 
+    @inlineCallbacks
     def setPaused(self, value):
-        self.rpc.queue_barrier_request(self._setPaused, value)
-
-    def _setPaused(self, rpc, value):
-        pid = rpc._activePlayer()
+        pid = yield self._activePlayer()
         if pid:
-            rpc._call('Player.PlayPause', playerid=pid, play=not value)
+            self.callRemote('Player.PlayPause', playerid=pid,
+                            play=not value)
 
+    @inlineCallbacks
     def setPosition(self, value):
         hours, value = divmod(value, 3600)
         minutes, value = divmod(value, 60)
@@ -218,12 +124,11 @@ class XbmcPlayer(BasePlayer):
             'seconds': int(seconds),
             'milliseconds': int(milliseconds)
         }
-        self.rpc.queue_barrier_request(self._setPosition, timespec)
 
-    def _setPosition(self, rpc, timespec):
-        pid = rpc._activePlayer()
+        pid = yield self._activePlayer()
         if pid:
-            rpc._call('Player.Seek', playerid=pid, value=timespec)
+            self.callRemote('Player.Seek', playerid=pid,
+                            value=timespec)
 
     def setSpeed(self, value):
         # Not supported
@@ -232,14 +137,12 @@ class XbmcPlayer(BasePlayer):
     def openFile(self, filePath, resetPosition=False):
         # TODO should display some warning or whatnot; opening files is flaky for
         # remote hosts.
-        self.rpc.queue_barrier_request(self._openFile, filePath, os.path.basename(filePath))
-
-    def _openFile(self, rpc, remotePath, name):
-        rpc._call('Player.Open', item={'file': remotePath})
+        self.callRemote('Player.Open', item={'file': filePath})
         # File change notification is handled by polling
 
     @staticmethod
     def isValidPlayerPath(path):
+        return True
         # TODO must be *fast*
         try:
             conn = jsonrpclib.Server(path + '/jsonrpc')
@@ -248,7 +151,7 @@ class XbmcPlayer(BasePlayer):
                 version = getattr(conn, 'JSONRPC.Version')()['version']
                 if version['major'] >= 6:
                     return True
-        except (IOError, xmlrpclib.Error) as e:
+        except:
             pass
         return False
 
@@ -269,3 +172,111 @@ class XbmcPlayer(BasePlayer):
     @staticmethod
     def getExpandedPath(path):
         return path
+
+# === jsonrpc largely borrowed from txjsonrpc ===
+import json
+import urlparse
+import twisted.internet.protocol
+import twisted.internet.defer
+import twisted.web.http
+
+class Proxy(object):
+    def __init__(self, url):
+        scheme, netloc, path, params, query, fragment = urlparse.urlparse(url)
+        # username/password in URL
+        netloc_parts = netloc.split('@')
+        if len(netloc_parts) == 2:
+            userpass = netloc_parts.pop(0).split(':')
+            self.user = userpass.pop(0)
+            try:
+                self.password = userpass.pop(0)
+            except IndexError:
+                self.password = None
+        else:
+            self.user = self.password = None
+        # Hostname, port number, path
+        hostport = netloc_parts[0].split(':')
+        self.host = hostport.pop(0)
+        try:
+            self.port = int(hostport.pop(0))
+        except IndexError:
+            self.port = None
+        self.path = path or '/'
+
+    def callRemote(self, method, *args, **kwargs):
+        # TODO should open one connection and keep it open. One factory
+        # instance also allows IDs to be assigned sensibly.
+        factory = QueryFactory(self.path, self.host, self.user, self.password,
+                               method, args, kwargs)
+        twisted.internet.reactor.connectTCP(self.host, self.port or 80, factory)
+        return factory.deferred
+
+
+class QueryProtocol(twisted.web.http.HTTPClient):
+    def connectionMade(self):
+        self.sendCommand('POST', self.factory.path)
+        self.sendHeader('Content-Type', 'application/json')
+        self.sendHeader('Content-Length', str(len(self.factory.payload)))
+        if self.factory.user:
+            auth = '{}:{}'.format(self.factory.user, self.factory.password)
+            auth = auth.encode('base64').strip()
+            self.sendHeader('Authorization', 'Basic {}'.format(auth))
+        self.endHeaders()
+        self.transport.write(self.factory.payload)
+
+    def handleStatus(self, version, status, message):
+        if status != '200':
+            self.factory.badStatus(status, message)
+
+    def handleResponse(self, contents):
+        self.factory.parseResponse(contents)
+
+
+class QueryFactory(twisted.internet.protocol.ClientFactory):
+    protocol = QueryProtocol
+
+    def __init__(self, path, host, user, password, method, args, kwargs):
+        self.path, self.host = path, host
+        self.user, self.password = user, password
+        self.deferred = twisted.internet.defer.Deferred()
+        # Build request payload
+        self.payload = json.dumps({
+            'jsonrpc': '2.0',
+            'id': '1',          # XXX
+            'method': method,
+            'params': kwargs
+        })
+
+    @staticmethod
+    def loads(s):
+        out = json.loads(s)
+        assert isinstance(out, dict)
+        assert ('result' in out or 'error' in out) and 'id' in out
+        if out.get('error') is not None:
+            raise Fault(out['error']['code'], out['error']['data'])
+        else:
+            return out['result']
+
+    def parseResponse(self, contents):
+        if self.deferred is None:
+            return
+        try:
+            result = self.loads(contents)
+        except Exception, error:
+            self.deferred.errback(error)
+            self.deferred = None
+        else:
+            self.deferred.callback(result)
+            self.deferred = None
+
+    def clientConnectionFailed(self, _, reason):
+        if self.deferred is not None:
+            self.deferred.errback(reason)
+            self.deferred = None
+
+    clientConnectionLost = clientConnectionFailed
+
+    def badStatus(self, status, message):
+        self.deferred.errback(ValueError(status, message))
+        self.deferred = None
+
