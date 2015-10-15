@@ -179,6 +179,7 @@ class SyncplayClient(object):
         # Ignore status report if the cookie is stale
         if cookie is not None and \
                 cookie < self._lastPlayerCommand + self._config['playerCommandDelay']:
+            self.ui.showDebugMessage('Ignoring stale player status with cookie {}'.format(cookie))
             return
 
         position -= self.getUserOffset()

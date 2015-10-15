@@ -1,11 +1,7 @@
-import functools
-import jsonrpclib
-import os.path
-import xmlrpclib
-
-from httplib import HTTPConnection
-from Queue import Queue
-from threading import Thread, Event
+import json
+import random
+import urllib2
+import urlparse
 
 from syncplay import constants
 from syncplay.players.basePlayer import BasePlayer
@@ -13,94 +9,6 @@ from syncplay.players.basePlayer import BasePlayer
 
 class NoActivePlayer(Exception):
     pass
-
-
-class RpcController(Thread):
-    def __init__(self, url, readyCallback):
-        Thread.__init__(self, name='XBMC RPC Interface')
-        self.daemon = True
-
-        self.readyCallback = readyCallback
-        self.url = url
-        self._connection = None
-        self._q = Queue()
-        self._stop = False
-        self._barrier = 0
-
-    def _call(self, method, **kwargs):
-        return getattr(self._connection, method)(**kwargs)
-
-    def _activePlayer(self):
-        players = self._call('Player.GetActivePlayers')
-        for p in players:
-            if p['type'] == 'video':
-                return p['playerid']
-
-    def _queue_request(self, f, args, barrier, evt):
-        """
-        Queue an RPC which will call f(*args).
-
-        If barrier is True, output from status checks which complete after this
-        request is queued but before it completes will be suppressed. This
-        ensures conflicting playback status will not leak out to the network
-        and cause "fighting".
-        """
-        assert self.isAlive()
-        if barrier:
-            # There may be multiple barrier requests queued at any given time,
-            # so we need to track the barrier depth.
-            assert self._barrier >= 0
-            self._barrier += 1
-        self._q.put((f, args, barrier, evt))
-
-    def queue_request(self, f, *args):
-        self._queue_request(f, args, False, None)
-
-    def queue_barrier_request(self, f, *args):
-        self._queue_request(f, args, True, None)
-
-    def blocking_request(self, f, *args):
-        """
-        Same as queue_request but blocks until the request completes.
-        """
-        evt = Event()
-        self._queue_request(f, args, True, evt)
-        evt.wait()
-
-    def stop(self):
-        def request_stop(_):
-            self._stop = True
-        self.blocking_request(request_stop)
-
-    def run(self):
-        self._connection = jsonrpclib.Server(self.url)
-        # Stop any active players
-        #for player in self._call('Player.GetActivePlayers'):
-        #    self._call('Player.Stop', playerid=player['playerid'])
-        # Fire "ready" callback
-        self.readyCallback(self)
-
-        # Process RPC requests until asked to stop
-        while not self._stop:
-            (f, args, is_barrier, evt) = self._q.get()
-            # Barriers are always executed; stop suppression
-            if is_barrier:
-                self._barrier -= 1
-                f(self, *args)
-            else:
-                # Skip if a barrier is preventing processing, but requeue. The
-                # caller allows only one status request in flight at a time and
-                # losing that one would be bad.
-                if self._barrier > 0:
-                    # Requeue, but deadlock would be catastrophic. Do not mark
-                    # as complete.
-                    self._q.put_nowait((f, args, is_barrier, evt))
-                    continue
-                else:
-                    f(self, *args)
-            # Mark done
-            if evt is not None:
-                evt.set()
 
 
 class XbmcPlayer(BasePlayer):
@@ -112,28 +20,35 @@ class XbmcPlayer(BasePlayer):
     osdMessageSeparator = '; '
 
     def __init__(self, client, url, filePath=None):
+        # twisted must not be imported at file-scope, because it mucks
+        # up registering the Qt reactor.
         from twisted.internet import reactor
+        from twisted.internet.task import LoopingCall
+        # Decorator, really
+        from twisted.internet.defer import inlineCallbacks
+        for method in ('askForStatus', 'updatePlayingFile', 'setPaused', 'setPosition'):
+            setattr(self, method, inlineCallbacks(getattr(self, method)))
+        # We need JsonRpcAgent to inherit from web.client.Agent, but can't do
+        # it in the declaration. Create a wrapper class here.
+        import twisted.web.client
+        class Proxy(JsonRpcAgent, twisted.web.client.Agent):
+            def __init__(self, reactor, url, connectTimeout=None):
+                twisted.web.client.Agent.__init__(self, reactor,
+                                                  connectTimeout=connectTimeout)
+                JsonRpcAgent.__init__(self, url)
+
         self.reactor = reactor
         self.client = client
-
+        self.proxy = Proxy(reactor, url.encode('ascii', 'replace') + '/jsonrpc')
         self._ping_pending = False
-        self.rpc = RpcController(url + '/jsonrpc', self._rpcReady)
-        self.rpc.start()
-        # Poll the active playing file occasionally to update the client
-        # Late-bind to twisted to sidestep wonky issues with whatever the main
-        # program does to twisted.
-        from twisted.internet.defer import Deferred
-        from twisted.internet.task import LoopingCall
-        self._Deferred = Deferred
+
+        # Poll the active playing file occasionally to update the client.
         self._file_props = (None, None, None)
-        self.file_poll = LoopingCall(self._ping_file)
+        self.file_poll = LoopingCall(self.updatePlayingFile)
         self.file_poll.start(1.5)
 
         if filePath:
             self.openFile(filePath)
-
-    def _rpcReady(self, rpc):
-        # RPC handler is ready, so the player is up
         self.reactor.callFromThread(self.client.initPlayer, self)
 
     @staticmethod
@@ -141,21 +56,33 @@ class XbmcPlayer(BasePlayer):
         """Get an instance of the Player."""
         return XbmcPlayer(client, playerPath, filePath)
 
-    def askForStatus(self):
+    def callRemote(self, method, *args, **kwargs):
+        return self.proxy.callRemote(method, *args, **kwargs)
+
+    def _activePlayer(self):
+        d = self.callRemote('Player.GetActivePlayers')
+        def findVideoPlayerId(players):
+            for p in players:
+                if p['type'] == 'video':
+                    return p['playerid']
+        d.addCallback(findVideoPlayerId)
+        return d
+
+    def askForStatus(self, cookie=None):
         """
         Get player pause state and position, passing back to
         client.updatePlayerStatus.
         """
         # Client tends to call this faster than we can get RPC responses. Only
         # queue a new request if there isn't one pending.
-        if not self._ping_pending:
-            self.rpc.queue_request(self._ping_playback)
-            self._ping_pending = True
+        if self._ping_pending:
+            return
+        self._ping_pending = True
 
-    def _ping_playback(self, rpc):
-        pid = rpc._activePlayer()
+        pid = yield self._activePlayer()
         if pid:
-            resp = rpc._call('Player.GetProperties', playerid=pid, properties=['speed', 'time'])
+            resp = yield self.callRemote('Player.GetProperties', playerid=pid,
+                                         properties=['speed', 'time'])
             paused = resp['speed'] == 0
             t = resp['time']
             position = 3600 * t['hours'] + 60 * t['minutes'] + \
@@ -163,49 +90,41 @@ class XbmcPlayer(BasePlayer):
         else:
             paused = True
             position = 0
+        self.client.updatePlayerStatus(paused, position, cookie=cookie)
         self._ping_pending = False
-        self.reactor.callFromThread(self.client.updatePlayerStatus, paused, position)
 
-    def _ping_file(self):
-        d = self._Deferred()
-        self.rpc.queue_request(self._rpc_ping_file, d)
-        return d
-
-    def _rpc_ping_file(self, rpc, d):
-        pid = rpc._activePlayer()
-        if pid:
-            props = rpc._call('Player.GetItem', playerid=pid, properties=['file', 'runtime'])['item']
-            name = props['label']
-            length = props['runtime']   # in seconds
-            path = props['file']
-        else:
+    def updatePlayingFile(self):
+        """Called periodically to check what file is playing."""
+        pid = yield self._activePlayer()
+        if not pid:
             name = length = path = None
-        # Client notifies on every call here, so don't call back unless the file
-        # actually changed.
+        else:
+            props = yield self.callRemote('Player.GetItem', playerid=pid,
+                                          properties=['file', 'runtime'])
+            item = props['item']
+            name = item['label']
+            length = item['runtime']   # in seconds
+            path = item['file']
+        # client.updateFile pushes data out to the network, assuming it
+        # changed. Only do so if there actually was a change.
         if (name, length, path) != self._file_props:
             self._file_props = (name, length, path)
-            self.reactor.callFromThread(self.client.updateFile, name, length, path)
-        # Little silly, but need to do the callback in the reactor thread
-        self.reactor.callFromThread(d.callback, None)
+            self.client.updateFile(name, length, path)
 
     def displayMessage(self, message, duration=constants.OSD_DURATION * 1000,
                        secondaryOSD=False):
-        self.rpc.queue_request(self._displayMessage, message, duration)
-
-    def _displayMessage(self, rpc, message, duration):
-        rpc._call('GUI.ShowNotification', title='SyncPlay Client', message=message, image='info')
+        self.callRemote('GUI.ShowNotification', title='SyncPlay',
+                        message=message, image='info')
 
     def drop(self):
-        self.file_poll.stop()
-        self.rpc.stop()
+        if self.file_poll.running:
+            self.file_poll.stop()
 
     def setPaused(self, value):
-        self.rpc.queue_barrier_request(self._setPaused, value)
-
-    def _setPaused(self, rpc, value):
-        pid = rpc._activePlayer()
+        pid = yield self._activePlayer()
         if pid:
-            rpc._call('Player.PlayPause', playerid=pid, play=not value)
+            self.callRemote('Player.PlayPause', playerid=pid,
+                            play=not value)
 
     def setPosition(self, value):
         hours, value = divmod(value, 3600)
@@ -218,12 +137,11 @@ class XbmcPlayer(BasePlayer):
             'seconds': int(seconds),
             'milliseconds': int(milliseconds)
         }
-        self.rpc.queue_barrier_request(self._setPosition, timespec)
 
-    def _setPosition(self, rpc, timespec):
-        pid = rpc._activePlayer()
+        pid = yield self._activePlayer()
         if pid:
-            rpc._call('Player.Seek', playerid=pid, value=timespec)
+            self.callRemote('Player.Seek', playerid=pid,
+                            value=timespec)
 
     def setSpeed(self, value):
         # Not supported
@@ -232,23 +150,32 @@ class XbmcPlayer(BasePlayer):
     def openFile(self, filePath, resetPosition=False):
         # TODO should display some warning or whatnot; opening files is flaky for
         # remote hosts.
-        self.rpc.queue_barrier_request(self._openFile, filePath, os.path.basename(filePath))
-
-    def _openFile(self, rpc, remotePath, name):
-        rpc._call('Player.Open', item={'file': remotePath})
+        self.callRemote('Player.Open', item={'file': filePath})
         # File change notification is handled by polling
 
     @staticmethod
     def isValidPlayerPath(path):
-        # TODO must be *fast*
+        url, headers = extractURLAuth(path)
+        headers['Content-Type'] = 'application/json'
+        req = urllib2.Request(url + '/jsonrpc', json.dumps({
+            'jsonrpc': '2.0',
+            'method': 'Application.GetProperties',
+            'params': {
+                'properties': ['name', 'version']
+            },
+            'id': 1
+        }), headers)
         try:
-            conn = jsonrpclib.Server(path + '/jsonrpc')
-            props = getattr(conn, 'Application.GetProperties')(properties=['name'])
-            if props['name'] in ('XBMC', 'Kodi'):
-                version = getattr(conn, 'JSONRPC.Version')()['version']
-                if version['major'] >= 6:
-                    return True
-        except (IOError, xmlrpclib.Error) as e:
+            conn = urllib2.urlopen(req, timeout=1)
+            if conn.getcode() != 200:
+                return False
+
+            response = json.load(conn)['result']
+            if response['name'] in ('XBMC', 'Kodi') and \
+                    response['version']['major'] >= 12:
+                # JSON-RPC API v6
+                return True
+        except Exception as e:
             pass
         return False
 
@@ -269,3 +196,84 @@ class XbmcPlayer(BasePlayer):
     @staticmethod
     def getExpandedPath(path):
         return path
+
+
+class HttpError(Exception): pass
+class RpcError(Exception): pass
+
+def extractURLAuth(url):
+    target = urlparse.urlsplit(url)
+    header = {}
+    if target.username is not None:
+        auth = '{}:{}'.format(target.username, target.password)
+        auth = auth.encode('base64').strip()
+        header['Authorization'] = 'Basic {}'.format(auth)
+
+    scheme, netloc, path, query, fragment = target
+    if '@' in netloc:
+        netloc = netloc.partition('@')[2]
+    return urlparse.urlunsplit((scheme, netloc, path, query, fragment)), header
+
+class JsonRpcProducer(object):
+    def __init__(self, id, method, kwargs):
+        self.body = json.dumps({
+            'jsonrpc': '2.0',
+            'id': id,
+            'method': method,
+            'params': kwargs
+        })
+        self.length = len(self.body)
+
+    def startProducing(self, consumer):
+        from twisted.internet.defer import succeed
+        consumer.write(self.body)
+        return succeed(None)
+
+    def pauseProducing(self): pass
+    def stopProducing(self): pass
+
+
+class JsonRpcAgent(object):
+    def __init__(self, url):
+        from twisted.web.http_headers import Headers
+        self.id_seqnum = 0
+        self.headers = Headers({
+            'Content-Type': ['application/json'],
+        })
+
+        # Parse the URL to determine what Authorization header to include
+        self.url, auth_header = extractURLAuth(url)
+        for k, v in auth_header.iteritems():
+            self.headers.addRawHeader(k, v)
+
+
+    def callRemote(self, method, *args, **kwargs):
+        self.id_seqnum += 1
+        d = self.request('POST', self.url, self.headers,
+                         JsonRpcProducer(self.id_seqnum, method, kwargs))
+        
+        def handleBody(s):
+            """
+            Receives response body contents and turns them into json, or
+            triggers errback.
+            """
+            out = json.loads(s)
+            assert isinstance(out, dict)
+            assert ('result' in out or 'error' in out) and 'id' in out
+            if out.get('error') is not None:
+                raise RpcError(out['error']['code'], out['error']['data'])
+            else:
+                return out['result']
+
+        def handleResponse(r):
+            from twisted.web.client import readBody
+            if r.code == 200:
+                read_body = readBody(r)
+                read_body.addCallback(handleBody)
+                return read_body
+            else:
+                raise HttpError(r.code)
+
+        # request -> handleResponse -> handleBody -> user
+        d.addCallback(handleResponse)
+        return d
