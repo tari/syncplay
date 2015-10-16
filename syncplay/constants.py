@@ -107,7 +107,7 @@ MPLAYER_ICONPATH = "mplayer.png"
 MPV_ICONPATH = "mpv.png"
 MPC_ICONPATH = "mpc-hc.png"
 MPC64_ICONPATH = "mpc-hc64.png"
-XBMC_ICONPATH = "xbmc.png"
+XBMC_ICONPATH = "kodi.png"
 
 #Changing these is usually not something you're looking for
 PLAYER_ASK_DELAY = 0.1
